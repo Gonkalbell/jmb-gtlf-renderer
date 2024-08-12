@@ -2,21 +2,27 @@
 //
 // ^ wgsl_bindgen version 0.15.0
 // Changes made to this file will not be saved.
-// SourceHash: d00b266a02e7ead12100b392d4d7408c7c35c64031299e37a4c2a1230df2f7fa
+// SourceHash: 4b6126413c725b321fefde0acdc7b4d04888dc4dfd9ec5959afe56b8114ff056
 
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ShaderEntry {
+    Scene,
     Skybox,
 }
 impl ShaderEntry {
     pub fn create_pipeline_layout(&self, device: &wgpu::Device) -> wgpu::PipelineLayout {
         match self {
+            Self::Scene => scene::create_pipeline_layout(device),
             Self::Skybox => skybox::create_pipeline_layout(device),
         }
     }
-    pub fn create_shader_module_embed_source(&self, device: &wgpu::Device) -> wgpu::ShaderModule {
+    pub fn create_shader_module_embed_source(
+        &self,
+        device: &wgpu::Device,
+    ) -> wgpu::ShaderModule {
         match self {
+            Self::Scene => scene::create_shader_module_embed_source(device),
             Self::Skybox => skybox::create_shader_module_embed_source(device),
         }
     }
@@ -27,21 +33,26 @@ mod _root {
 pub mod layout_asserts {
     use super::{_root, _root::*};
     const WGSL_BASE_TYPE_ASSERTS: () = {
-        assert!(std::mem::size_of::<glam::Vec3A>() == 16);
-        assert!(std::mem::align_of::<glam::Vec3A>() == 16);
-        assert!(std::mem::size_of::<glam::Vec4>() == 16);
-        assert!(std::mem::align_of::<glam::Vec4>() == 16);
-        assert!(std::mem::size_of::<glam::Mat3A>() == 48);
-        assert!(std::mem::align_of::<glam::Mat3A>() == 16);
-        assert!(std::mem::size_of::<glam::Mat4>() == 64);
-        assert!(std::mem::align_of::<glam::Mat4>() == 16);
+        assert!(std::mem::size_of:: < glam::Vec3A > () == 16);
+        assert!(std::mem::align_of:: < glam::Vec3A > () == 16);
+        assert!(std::mem::size_of:: < glam::Vec4 > () == 16);
+        assert!(std::mem::align_of:: < glam::Vec4 > () == 16);
+        assert!(std::mem::size_of:: < glam::Mat3A > () == 48);
+        assert!(std::mem::align_of:: < glam::Mat3A > () == 16);
+        assert!(std::mem::size_of:: < glam::Mat4 > () == 64);
+        assert!(std::mem::align_of:: < glam::Mat4 > () == 16);
     };
     const BGROUP_CAMERA_CAMERA_ASSERTS: () = {
         assert!(std::mem::offset_of!(bgroup_camera::Camera, view) == 0);
         assert!(std::mem::offset_of!(bgroup_camera::Camera, view_inv) == 64);
         assert!(std::mem::offset_of!(bgroup_camera::Camera, proj) == 128);
         assert!(std::mem::offset_of!(bgroup_camera::Camera, proj_inv) == 192);
-        assert!(std::mem::size_of::<bgroup_camera::Camera>() == 256);
+        assert!(std::mem::size_of:: < bgroup_camera::Camera > () == 256);
+    };
+    const SCENE_NODE_ASSERTS: () = {
+        assert!(std::mem::offset_of!(scene::Node, transform) == 0);
+        assert!(std::mem::offset_of!(scene::Node, normal_transform) == 64);
+        assert!(std::mem::size_of:: < scene::Node > () == 128);
     };
 }
 pub mod bgroup_camera {
@@ -78,6 +89,363 @@ pub mod bytemuck_impls {
     use super::{_root, _root::*};
     unsafe impl bytemuck::Zeroable for bgroup_camera::Camera {}
     unsafe impl bytemuck::Pod for bgroup_camera::Camera {}
+    unsafe impl bytemuck::Zeroable for scene::Node {}
+    unsafe impl bytemuck::Pod for scene::Node {}
+    unsafe impl bytemuck::Zeroable for scene::VertexInput {}
+    unsafe impl bytemuck::Pod for scene::VertexInput {}
+}
+pub mod scene {
+    use super::{_root, _root::*};
+    #[repr(C, align(16))]
+    #[derive(Debug, PartialEq, Clone, Copy, serde::Serialize, serde::Deserialize)]
+    pub struct Node {
+        /// size: 64, offset: 0x0, type: `mat4x4<f32>`
+        pub transform: glam::Mat4,
+        /// size: 64, offset: 0x40, type: `mat4x4<f32>`
+        pub normal_transform: glam::Mat4,
+    }
+    impl Node {
+        pub const fn new(transform: glam::Mat4, normal_transform: glam::Mat4) -> Self {
+            Self {
+                transform,
+                normal_transform,
+            }
+        }
+    }
+    #[repr(C)]
+    #[derive(Debug, PartialEq, Clone, Copy, serde::Serialize, serde::Deserialize)]
+    pub struct VertexInput {
+        pub position: glam::Vec3A,
+        pub normal: glam::Vec3A,
+    }
+    impl VertexInput {
+        pub const fn new(position: glam::Vec3A, normal: glam::Vec3A) -> Self {
+            Self { position, normal }
+        }
+    }
+    impl VertexInput {
+        pub const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 2] = [
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x3,
+                offset: std::mem::offset_of!(Self, position) as u64,
+                shader_location: 0,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x3,
+                offset: std::mem::offset_of!(Self, normal) as u64,
+                shader_location: 1,
+            },
+        ];
+        pub const fn vertex_buffer_layout(
+            step_mode: wgpu::VertexStepMode,
+        ) -> wgpu::VertexBufferLayout<'static> {
+            wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<Self>() as u64,
+                step_mode,
+                attributes: &Self::VERTEX_ATTRIBUTES,
+            }
+        }
+    }
+    #[derive(Debug)]
+    pub struct WgpuBindGroup0EntriesParams<'a> {
+        pub res_camera: wgpu::BufferBinding<'a>,
+    }
+    #[derive(Clone, Debug)]
+    pub struct WgpuBindGroup0Entries<'a> {
+        pub res_camera: wgpu::BindGroupEntry<'a>,
+    }
+    impl<'a> WgpuBindGroup0Entries<'a> {
+        pub fn new(params: WgpuBindGroup0EntriesParams<'a>) -> Self {
+            Self {
+                res_camera: wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(params.res_camera),
+                },
+            }
+        }
+        pub fn as_array(self) -> [wgpu::BindGroupEntry<'a>; 1] {
+            [self.res_camera]
+        }
+        pub fn collect<B: FromIterator<wgpu::BindGroupEntry<'a>>>(self) -> B {
+            self.as_array().into_iter().collect()
+        }
+    }
+    #[derive(Debug)]
+    pub struct WgpuBindGroup0(wgpu::BindGroup);
+    impl WgpuBindGroup0 {
+        pub const LAYOUT_DESCRIPTOR: wgpu::BindGroupLayoutDescriptor<'static> = wgpu::BindGroupLayoutDescriptor {
+            label: Some("Scene::BindGroup0::LayoutDescriptor"),
+            entries: &[
+                /// @binding(0): "_root::bgroup_camera::res_camera"
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: std::num::NonZeroU64::new(
+                            std::mem::size_of::<_root::bgroup_camera::Camera>() as _,
+                        ),
+                    },
+                    count: None,
+                },
+            ],
+        };
+        pub fn get_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+            device.create_bind_group_layout(&Self::LAYOUT_DESCRIPTOR)
+        }
+        pub fn from_bindings(
+            device: &wgpu::Device,
+            bindings: WgpuBindGroup0Entries,
+        ) -> Self {
+            let bind_group_layout = Self::get_bind_group_layout(&device);
+            let entries = bindings.as_array();
+            let bind_group = device
+                .create_bind_group(
+                    &wgpu::BindGroupDescriptor {
+                        label: Some("Scene::BindGroup0"),
+                        layout: &bind_group_layout,
+                        entries: &entries,
+                    },
+                );
+            Self(bind_group)
+        }
+        pub fn set<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
+            render_pass.set_bind_group(0, &self.0, &[]);
+        }
+    }
+    #[derive(Debug)]
+    pub struct WgpuBindGroup1EntriesParams<'a> {
+        pub res_node: wgpu::BufferBinding<'a>,
+    }
+    #[derive(Clone, Debug)]
+    pub struct WgpuBindGroup1Entries<'a> {
+        pub res_node: wgpu::BindGroupEntry<'a>,
+    }
+    impl<'a> WgpuBindGroup1Entries<'a> {
+        pub fn new(params: WgpuBindGroup1EntriesParams<'a>) -> Self {
+            Self {
+                res_node: wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(params.res_node),
+                },
+            }
+        }
+        pub fn as_array(self) -> [wgpu::BindGroupEntry<'a>; 1] {
+            [self.res_node]
+        }
+        pub fn collect<B: FromIterator<wgpu::BindGroupEntry<'a>>>(self) -> B {
+            self.as_array().into_iter().collect()
+        }
+    }
+    #[derive(Debug)]
+    pub struct WgpuBindGroup1(wgpu::BindGroup);
+    impl WgpuBindGroup1 {
+        pub const LAYOUT_DESCRIPTOR: wgpu::BindGroupLayoutDescriptor<'static> = wgpu::BindGroupLayoutDescriptor {
+            label: Some("Scene::BindGroup1::LayoutDescriptor"),
+            entries: &[
+                /// @binding(0): "res_node"
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: std::num::NonZeroU64::new(
+                            std::mem::size_of::<_root::scene::Node>() as _,
+                        ),
+                    },
+                    count: None,
+                },
+            ],
+        };
+        pub fn get_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+            device.create_bind_group_layout(&Self::LAYOUT_DESCRIPTOR)
+        }
+        pub fn from_bindings(
+            device: &wgpu::Device,
+            bindings: WgpuBindGroup1Entries,
+        ) -> Self {
+            let bind_group_layout = Self::get_bind_group_layout(&device);
+            let entries = bindings.as_array();
+            let bind_group = device
+                .create_bind_group(
+                    &wgpu::BindGroupDescriptor {
+                        label: Some("Scene::BindGroup1"),
+                        layout: &bind_group_layout,
+                        entries: &entries,
+                    },
+                );
+            Self(bind_group)
+        }
+        pub fn set<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
+            render_pass.set_bind_group(1, &self.0, &[]);
+        }
+    }
+    #[derive(Debug, Copy, Clone)]
+    pub struct WgpuBindGroups<'a> {
+        pub bind_group0: &'a WgpuBindGroup0,
+        pub bind_group1: &'a WgpuBindGroup1,
+    }
+    impl<'a> WgpuBindGroups<'a> {
+        pub fn set(&self, pass: &mut wgpu::RenderPass<'a>) {
+            self.bind_group0.set(pass);
+            self.bind_group1.set(pass);
+        }
+    }
+    pub fn set_bind_groups<'a>(
+        pass: &mut wgpu::RenderPass<'a>,
+        bind_group0: &'a WgpuBindGroup0,
+        bind_group1: &'a WgpuBindGroup1,
+    ) {
+        bind_group0.set(pass);
+        bind_group1.set(pass);
+    }
+    pub const ENTRY_VS_SCENE: &str = "vs_scene";
+    pub const ENTRY_FS_SCENE: &str = "fs_scene";
+    #[derive(Debug)]
+    pub struct VertexEntry<const N: usize> {
+        pub entry_point: &'static str,
+        pub buffers: [wgpu::VertexBufferLayout<'static>; N],
+        pub constants: std::collections::HashMap<String, f64>,
+    }
+    pub fn vertex_state<'a, const N: usize>(
+        module: &'a wgpu::ShaderModule,
+        entry: &'a VertexEntry<N>,
+    ) -> wgpu::VertexState<'a> {
+        wgpu::VertexState {
+            module,
+            entry_point: entry.entry_point,
+            buffers: &entry.buffers,
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &entry.constants,
+                ..Default::default()
+            },
+        }
+    }
+    pub fn vs_scene_entry(vertex_input: wgpu::VertexStepMode) -> VertexEntry<1> {
+        VertexEntry {
+            entry_point: ENTRY_VS_SCENE,
+            buffers: [VertexInput::vertex_buffer_layout(vertex_input)],
+            constants: Default::default(),
+        }
+    }
+    #[derive(Debug)]
+    pub struct FragmentEntry<const N: usize> {
+        pub entry_point: &'static str,
+        pub targets: [Option<wgpu::ColorTargetState>; N],
+        pub constants: std::collections::HashMap<String, f64>,
+    }
+    pub fn fragment_state<'a, const N: usize>(
+        module: &'a wgpu::ShaderModule,
+        entry: &'a FragmentEntry<N>,
+    ) -> wgpu::FragmentState<'a> {
+        wgpu::FragmentState {
+            module,
+            entry_point: entry.entry_point,
+            targets: &entry.targets,
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &entry.constants,
+                ..Default::default()
+            },
+        }
+    }
+    pub fn fs_scene_entry(
+        targets: [Option<wgpu::ColorTargetState>; 1],
+    ) -> FragmentEntry<1> {
+        FragmentEntry {
+            entry_point: ENTRY_FS_SCENE,
+            targets,
+            constants: Default::default(),
+        }
+    }
+    #[derive(Debug)]
+    pub struct WgpuPipelineLayout;
+    impl WgpuPipelineLayout {
+        pub fn bind_group_layout_entries(
+            entries: [wgpu::BindGroupLayout; 2],
+        ) -> [wgpu::BindGroupLayout; 2] {
+            entries
+        }
+    }
+    pub fn create_pipeline_layout(device: &wgpu::Device) -> wgpu::PipelineLayout {
+        device
+            .create_pipeline_layout(
+                &wgpu::PipelineLayoutDescriptor {
+                    label: Some("Scene::PipelineLayout"),
+                    bind_group_layouts: &[
+                        &WgpuBindGroup0::get_bind_group_layout(device),
+                        &WgpuBindGroup1::get_bind_group_layout(device),
+                    ],
+                    push_constant_ranges: &[],
+                },
+            )
+    }
+    pub fn create_shader_module_embed_source(
+        device: &wgpu::Device,
+    ) -> wgpu::ShaderModule {
+        let source = std::borrow::Cow::Borrowed(SHADER_STRING);
+        device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("scene.wgsl"),
+                source: wgpu::ShaderSource::Wgsl(source),
+            })
+    }
+    pub const SHADER_STRING: &'static str = r#"
+struct CameraX_naga_oil_mod_XMJTXE33VOBPWGYLNMVZGCX {
+    view: mat4x4<f32>,
+    view_inv: mat4x4<f32>,
+    proj: mat4x4<f32>,
+    proj_inv: mat4x4<f32>,
+}
+
+struct Node {
+    transform: mat4x4<f32>,
+    normal_transform: mat4x4<f32>,
+}
+
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+}
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) normal: vec3<f32>,
+}
+
+const LIGHT_DIR: vec3<f32> = vec3<f32>(0.25f, 0.5f, 1f);
+const AMBIENT_COLOR: vec3<f32> = vec3(0.1f);
+
+@group(0) @binding(0) 
+var<uniform> res_cameraX_naga_oil_mod_XMJTXE33VOBPWGYLNMVZGCX: CameraX_naga_oil_mod_XMJTXE33VOBPWGYLNMVZGCX;
+@group(1) @binding(0) 
+var<uniform> res_node: Node;
+
+@vertex 
+fn vs_scene(input: VertexInput) -> VertexOutput {
+    var output: VertexOutput;
+
+    let _e4 = res_cameraX_naga_oil_mod_XMJTXE33VOBPWGYLNMVZGCX.proj;
+    let _e7 = res_cameraX_naga_oil_mod_XMJTXE33VOBPWGYLNMVZGCX.view;
+    let _e12 = res_node.transform;
+    output.position = (((_e4 * _e7) * _e12) * vec4<f32>(input.position, 1f));
+    let _e21 = res_cameraX_naga_oil_mod_XMJTXE33VOBPWGYLNMVZGCX.view;
+    let _e24 = res_node.normal_transform;
+    output.normal = ((_e21 * _e24) * vec4<f32>(input.normal, 0f)).xyz;
+    let _e31 = output;
+    return _e31;
+}
+
+@fragment 
+fn fs_scene(input_1: VertexOutput) -> @location(0) vec4<f32> {
+    let N = normalize(input_1.normal);
+    let L = normalize(LIGHT_DIR);
+    let NDotL = max(dot(N, L), 0f);
+    let surface_color = (AMBIENT_COLOR + vec3(NDotL));
+    return vec4<f32>(surface_color, 1f);
+}
+"#;
 }
 pub mod skybox {
     use super::{_root, _root::*};
@@ -108,38 +476,41 @@ pub mod skybox {
     #[derive(Debug)]
     pub struct WgpuBindGroup0(wgpu::BindGroup);
     impl WgpuBindGroup0 {
-        pub const LAYOUT_DESCRIPTOR: wgpu::BindGroupLayoutDescriptor<'static> =
-            wgpu::BindGroupLayoutDescriptor {
-                label: Some("Skybox::BindGroup0::LayoutDescriptor"),
-                entries: &[
-                    /// @binding(0): "_root::bgroup_camera::res_camera"
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: std::num::NonZeroU64::new(std::mem::size_of::<
-                                _root::bgroup_camera::Camera,
-                            >(
-                            )
-                                as _),
-                        },
-                        count: None,
+        pub const LAYOUT_DESCRIPTOR: wgpu::BindGroupLayoutDescriptor<'static> = wgpu::BindGroupLayoutDescriptor {
+            label: Some("Skybox::BindGroup0::LayoutDescriptor"),
+            entries: &[
+                /// @binding(0): "_root::bgroup_camera::res_camera"
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: std::num::NonZeroU64::new(
+                            std::mem::size_of::<_root::bgroup_camera::Camera>() as _,
+                        ),
                     },
-                ],
-            };
+                    count: None,
+                },
+            ],
+        };
         pub fn get_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             device.create_bind_group_layout(&Self::LAYOUT_DESCRIPTOR)
         }
-        pub fn from_bindings(device: &wgpu::Device, bindings: WgpuBindGroup0Entries) -> Self {
+        pub fn from_bindings(
+            device: &wgpu::Device,
+            bindings: WgpuBindGroup0Entries,
+        ) -> Self {
             let bind_group_layout = Self::get_bind_group_layout(&device);
             let entries = bindings.as_array();
-            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Skybox::BindGroup0"),
-                layout: &bind_group_layout,
-                entries: &entries,
-            });
+            let bind_group = device
+                .create_bind_group(
+                    &wgpu::BindGroupDescriptor {
+                        label: Some("Skybox::BindGroup0"),
+                        layout: &bind_group_layout,
+                        entries: &entries,
+                    },
+                );
             Self(bind_group)
         }
         pub fn set<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
@@ -179,41 +550,48 @@ pub mod skybox {
     #[derive(Debug)]
     pub struct WgpuBindGroup1(wgpu::BindGroup);
     impl WgpuBindGroup1 {
-        pub const LAYOUT_DESCRIPTOR: wgpu::BindGroupLayoutDescriptor<'static> =
-            wgpu::BindGroupLayoutDescriptor {
-                label: Some("Skybox::BindGroup1::LayoutDescriptor"),
-                entries: &[
-                    /// @binding(0): "res_texture"
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::Cube,
-                            multisampled: false,
+        pub const LAYOUT_DESCRIPTOR: wgpu::BindGroupLayoutDescriptor<'static> = wgpu::BindGroupLayoutDescriptor {
+            label: Some("Skybox::BindGroup1::LayoutDescriptor"),
+            entries: &[
+                /// @binding(0): "res_texture"
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float {
+                            filterable: true,
                         },
-                        count: None,
+                        view_dimension: wgpu::TextureViewDimension::Cube,
+                        multisampled: false,
                     },
-                    /// @binding(1): "res_sampler"
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            };
+                    count: None,
+                },
+                /// @binding(1): "res_sampler"
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        };
         pub fn get_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             device.create_bind_group_layout(&Self::LAYOUT_DESCRIPTOR)
         }
-        pub fn from_bindings(device: &wgpu::Device, bindings: WgpuBindGroup1Entries) -> Self {
+        pub fn from_bindings(
+            device: &wgpu::Device,
+            bindings: WgpuBindGroup1Entries,
+        ) -> Self {
             let bind_group_layout = Self::get_bind_group_layout(&device);
             let entries = bindings.as_array();
-            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Skybox::BindGroup1"),
-                layout: &bind_group_layout,
-                entries: &entries,
-            });
+            let bind_group = device
+                .create_bind_group(
+                    &wgpu::BindGroupDescriptor {
+                        label: Some("Skybox::BindGroup1"),
+                        layout: &bind_group_layout,
+                        entries: &entries,
+                    },
+                );
             Self(bind_group)
         }
         pub fn set<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
@@ -288,7 +666,9 @@ pub mod skybox {
             },
         }
     }
-    pub fn fs_skybox_entry(targets: [Option<wgpu::ColorTargetState>; 1]) -> FragmentEntry<1> {
+    pub fn fs_skybox_entry(
+        targets: [Option<wgpu::ColorTargetState>; 1],
+    ) -> FragmentEntry<1> {
         FragmentEntry {
             entry_point: ENTRY_FS_SKYBOX,
             targets,
@@ -305,21 +685,27 @@ pub mod skybox {
         }
     }
     pub fn create_pipeline_layout(device: &wgpu::Device) -> wgpu::PipelineLayout {
-        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Skybox::PipelineLayout"),
-            bind_group_layouts: &[
-                &WgpuBindGroup0::get_bind_group_layout(device),
-                &WgpuBindGroup1::get_bind_group_layout(device),
-            ],
-            push_constant_ranges: &[],
-        })
+        device
+            .create_pipeline_layout(
+                &wgpu::PipelineLayoutDescriptor {
+                    label: Some("Skybox::PipelineLayout"),
+                    bind_group_layouts: &[
+                        &WgpuBindGroup0::get_bind_group_layout(device),
+                        &WgpuBindGroup1::get_bind_group_layout(device),
+                    ],
+                    push_constant_ranges: &[],
+                },
+            )
     }
-    pub fn create_shader_module_embed_source(device: &wgpu::Device) -> wgpu::ShaderModule {
+    pub fn create_shader_module_embed_source(
+        device: &wgpu::Device,
+    ) -> wgpu::ShaderModule {
         let source = std::borrow::Cow::Borrowed(SHADER_STRING);
-        device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("skybox.wgsl"),
-            source: wgpu::ShaderSource::Wgsl(source),
-        })
+        device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("skybox.wgsl"),
+                source: wgpu::ShaderSource::Wgsl(source),
+            })
     }
     pub const SHADER_STRING: &'static str = r#"
 struct CameraX_naga_oil_mod_XMJTXE33VOBPWGYLNMVZGCX {

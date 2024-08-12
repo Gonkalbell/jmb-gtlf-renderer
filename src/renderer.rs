@@ -3,7 +3,10 @@ mod camera;
 #[allow(clippy::all)]
 mod shaders;
 
+use std::{collections::HashMap, f32::consts::TAU, primitive};
+
 use eframe::wgpu;
+use glam::{Mat4, Vec3A};
 use puffin::profile_function;
 use wgpu::util::DeviceExt;
 
@@ -13,13 +16,35 @@ use shaders::*;
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-type CameraBindGroup = shaders::skybox::WgpuBindGroup0;
-type CameraBindGroupEntries<'a> = shaders::skybox::WgpuBindGroup0Entries<'a>;
-type CameraBindGroupEntriesParams<'a> = shaders::skybox::WgpuBindGroup0EntriesParams<'a>;
+type CameraBindGroup = skybox::WgpuBindGroup0;
+type CameraBindGroupEntries<'a> = skybox::WgpuBindGroup0Entries<'a>;
+type CameraBindGroupEntriesParams<'a> = skybox::WgpuBindGroup0EntriesParams<'a>;
 
-type SkyboxBindGroup = shaders::skybox::WgpuBindGroup1;
-type SkyboxBindGroupEntries<'a> = shaders::skybox::WgpuBindGroup1Entries<'a>;
-type SkyboxBindGroupEntriesParams<'a> = shaders::skybox::WgpuBindGroup1EntriesParams<'a>;
+type NodeBindGroup = scene::WgpuBindGroup1;
+type NodeBindGroupEntries<'a> = scene::WgpuBindGroup1Entries<'a>;
+type NodeBindGroupEntriesParams<'a> = scene::WgpuBindGroup1EntriesParams<'a>;
+
+type SkyboxBindGroup = skybox::WgpuBindGroup1;
+type SkyboxBindGroupEntries<'a> = skybox::WgpuBindGroup1Entries<'a>;
+type SkyboxBindGroupEntriesParams<'a> = skybox::WgpuBindGroup1EntriesParams<'a>;
+
+struct Node {
+    mesh_index: usize,
+    bgroup: NodeBindGroup,
+}
+
+struct Primitive {
+    pipeline: wgpu::RenderPipeline,
+    buffers: Vec<wgpu::Buffer>,
+    draw_count: u32,
+    index_data: Option<PrimitiveIndexData>,
+}
+
+struct PrimitiveIndexData {
+    buffer: wgpu::Buffer,
+    // offset: u32,
+    format: wgpu::IndexFormat,
+}
 
 pub struct SceneRenderer {
     camera_buf: wgpu::Buffer,
@@ -31,6 +56,10 @@ pub struct SceneRenderer {
 
     // PIPELINES
     skybox_pipeline: wgpu::RenderPipeline,
+
+    // dummy_primitive: Primitive,
+    nodes: HashMap<usize, Node>,
+    meshes: HashMap<usize, Vec<Primitive>>,
 }
 
 impl SceneRenderer {
@@ -39,11 +68,13 @@ impl SceneRenderer {
         queue: &wgpu::Queue,
         color_format: wgpu::TextureFormat,
     ) -> Self {
+        // Setup buffers and textures for the camera and skybox
+
         let user_camera = ArcBallCamera::default();
 
         let camera_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Uniform Buffer"),
-            contents: bytemuck::bytes_of(&shaders::bgroup_camera::Camera {
+            contents: bytemuck::bytes_of(&bgroup_camera::Camera {
                 view: Default::default(),
                 view_inv: Default::default(),
                 proj: Default::default(),
@@ -136,6 +167,84 @@ impl SceneRenderer {
             multiview: None,
         });
 
+        // Load the GLTF scene
+
+        let (doc, buffers, images) =
+            gltf::import("assets/models/AntiqueCamera/glTF/AntiqueCamera.gltf")
+                .expect("Failed to load GLTF file");
+
+        let shader = scene::create_shader_module_embed_source(device);
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("scene primitive"),
+            layout: Some(&scene::create_pipeline_layout(device)),
+            vertex: scene::vertex_state(
+                &shader,
+                &scene::vs_scene_entry(wgpu::VertexStepMode::Vertex),
+            ),
+            fragment: Some(scene::fragment_state(
+                &shader,
+                &scene::fs_scene_entry([Some(color_format.into())]),
+            )),
+            primitive: wgpu::PrimitiveState {
+                front_face: wgpu::FrontFace::Cw,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+        });
+
+        let mut nodes = HashMap::new();
+        let node_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("DummyNode"),
+            contents: bytemuck::bytes_of(&scene::Node {
+                transform: Mat4::default(),
+                normal_transform: Mat4::default(),
+            }),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let bgroup = NodeBindGroup::from_bindings(
+            device,
+            NodeBindGroupEntries::new(NodeBindGroupEntriesParams {
+                res_node: node_buf.as_entire_buffer_binding(),
+            }),
+        );
+        nodes.insert(
+            0,
+            Node {
+                bgroup,
+                mesh_index: 0,
+            },
+        );
+
+        let vertices = [
+            scene::VertexInput::new(
+                Vec3A::new(-1., -1., 0.),
+                Vec3A::new(-1., -1., 1.).normalize(),
+            ),
+            scene::VertexInput::new(Vec3A::new(1., -1., 0.), Vec3A::new(1., -1., 1.).normalize()),
+            scene::VertexInput::new(Vec3A::new(0., 1., 0.), Vec3A::new(0., 1., 1.).normalize()),
+        ];
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("DummyMesh"),
+            contents: bytemuck::bytes_of(&vertices),
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        });
+        let dummy_primitive = Primitive {
+            pipeline,
+            buffers: vec![vertex_buffer],
+            draw_count: 3,
+            index_data: None,
+        };
+        let mut meshes = HashMap::new();
+        meshes.insert(0, vec![dummy_primitive]);
+
         Self {
             user_camera,
             camera_buf,
@@ -144,6 +253,9 @@ impl SceneRenderer {
             skybox_bgroup,
 
             skybox_pipeline,
+
+            nodes,
+            meshes,
         }
     }
 
@@ -158,7 +270,7 @@ impl SceneRenderer {
 
         let view = self.user_camera.view_matrix();
         let proj = self.user_camera.projection_matrix();
-        let camera = shaders::bgroup_camera::Camera {
+        let camera = bgroup_camera::Camera {
             view,
             view_inv: view.inverse(),
             proj,
@@ -173,6 +285,27 @@ impl SceneRenderer {
         profile_function!();
 
         self.camera_bgroup.set(rpass);
+
+        for node in self.nodes.values() {
+            node.bgroup.set(rpass);
+            let primitives = self
+                .meshes
+                .get(&node.mesh_index)
+                .expect("Node didn't have a mesh");
+            for primitive in primitives {
+                rpass.set_pipeline(&primitive.pipeline);
+                for (i, buffer) in primitive.buffers.iter().enumerate() {
+                    rpass.set_vertex_buffer(i as _, buffer.slice(..));
+                }
+                if let Some(index_data) = &primitive.index_data {
+                    rpass.set_index_buffer(index_data.buffer.slice(..), index_data.format);
+                    rpass.draw_indexed(0..primitive.draw_count, 0, 0..1);
+                } else {
+                    rpass.draw(0..primitive.draw_count, 0..1);
+                }
+            }
+        }
+
         self.skybox_bgroup.set(rpass);
         rpass.set_pipeline(&self.skybox_pipeline);
         rpass.draw(0..3, 0..1);

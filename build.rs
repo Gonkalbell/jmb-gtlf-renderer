@@ -13,6 +13,7 @@ use wgsl_bindgen::{GlamWgslTypeMap, WgslBindgenOptionBuilder, WgslTypeSerializeS
 fn main() -> Result<()> {
     WgslBindgenOptionBuilder::default()
         .workspace_root("src/renderer/shaders")
+        .add_entry_point("src/renderer/shaders/scene.wgsl")
         .add_entry_point("src/renderer/shaders/skybox.wgsl")
         .serialization_strategy(WgslTypeSerializeStrategy::Bytemuck)
         .type_map(GlamWgslTypeMap)
