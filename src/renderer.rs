@@ -3,13 +3,12 @@ mod camera;
 #[allow(clippy::all)]
 mod shaders;
 
-use std::{collections::HashMap, f32::consts::TAU, primitive, sync::Arc};
+use std::sync::Arc;
 
 use eframe::wgpu;
-use glam::{Mat4, Vec3A};
-use gltf::{buffer, mesh::Mode};
+use glam::Mat4;
+use gltf::mesh::Mode;
 use puffin::profile_function;
-use serde::Serialize;
 use wgpu::{util::DeviceExt, BufferUsages};
 
 use camera::ArcBallCamera;
@@ -54,15 +53,11 @@ struct Mesh {
 pub struct SceneRenderer {
     camera_buf: wgpu::Buffer,
     user_camera: ArcBallCamera,
-
-    // BIND GROUPS
     camera_bgroup: CameraBindGroup,
-    skybox_bgroup: SkyboxBindGroup,
 
-    // PIPELINES
+    skybox_bgroup: SkyboxBindGroup,
     skybox_pipeline: wgpu::RenderPipeline,
 
-    // dummy_primitive: Primitive,
     nodes: Vec<Node>,
     meshes: Vec<Mesh>,
 }
@@ -108,7 +103,7 @@ impl SceneRenderer {
         queue: &wgpu::Queue,
         color_format: wgpu::TextureFormat,
     ) -> Self {
-        // Setup buffers and textures for the camera and skybox
+        // Camera
 
         let user_camera = ArcBallCamera::default();
 
@@ -122,6 +117,15 @@ impl SceneRenderer {
             }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
+
+        let camera_bgroup = CameraBindGroup::from_bindings(
+            device,
+            CameraBindGroupEntries::new(CameraBindGroupEntriesParams {
+                res_camera: camera_buf.as_entire_buffer_binding(),
+            }),
+        );
+
+        // Skybox
 
         let ktx_reader = ktx2::Reader::new(include_bytes!("../assets/rgba8.ktx2"))
             .expect("Failed to find skybox texture");
@@ -155,15 +159,6 @@ impl SceneRenderer {
             ..wgpu::TextureViewDescriptor::default()
         });
 
-        // Create bind groups
-
-        let camera_bgroup = CameraBindGroup::from_bindings(
-            device,
-            CameraBindGroupEntries::new(CameraBindGroupEntriesParams {
-                res_camera: camera_buf.as_entire_buffer_binding(),
-            }),
-        );
-
         let skybox_bgroup = SkyboxBindGroup::from_bindings(
             device,
             SkyboxBindGroupEntries::new(SkyboxBindGroupEntriesParams {
@@ -180,8 +175,6 @@ impl SceneRenderer {
                 }),
             }),
         );
-
-        // Create pipelines
 
         let shader = skybox::create_shader_module_embed_source(device);
         let skybox_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -209,9 +202,14 @@ impl SceneRenderer {
 
         // Load the GLTF scene
 
-        let (doc, buffer_data, image_data) =
-            gltf::import("assets/models/AntiqueCamera/glTF/AntiqueCamera.gltf")
-                .expect("Failed to load GLTF file");
+        // TODO: I'm currently embedding the glb file directly into my binary because I'm too lazy to handle file
+        // loading separately on native and wasm targets. Maybe I should use WASI or some other API like that
+        let glb_file = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/models/AntiqueCamera/glTF-Binary/AntiqueCamera.glb"
+        ));
+        let (doc, buffer_data, _image_data) =
+            gltf::import_slice(glb_file).expect("Failed to load GLTF file");
 
         let buffers: Vec<_> = doc
             .views()
@@ -245,10 +243,9 @@ impl SceneRenderer {
         Self {
             user_camera,
             camera_buf,
-
             camera_bgroup,
-            skybox_bgroup,
 
+            skybox_bgroup,
             skybox_pipeline,
 
             nodes,
