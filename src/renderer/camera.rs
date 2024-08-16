@@ -57,8 +57,10 @@ impl ArcBallCamera {
 
         if input.pointer.secondary_down() {
             let clip_to_world = (self.projection_matrix() * self.view_matrix()).inverse();
-            //
-            let pointer_delta = (self.dist * clipspace_pointer_delta).extend(0.).extend(0.);
+            // I'm multiplying the dist here to "undo" the division that normally gets applied to perspective projection
+            // And I'm making it negative because I want it to feel like "dragging" the camera, so the scene should move
+            // in the opposite direction of the pointer.
+            let pointer_delta = (-self.dist * clipspace_pointer_delta).extend(0.).extend(0.);
             let worldspace_pointer_delta = clip_to_world * pointer_delta;
             self.center_pos += worldspace_pointer_delta.truncate();
         }
