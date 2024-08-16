@@ -22,7 +22,7 @@ bytemuck = { version = "1.16.3", features = ["derive"] }
 glam = { version = "0.28.0", features = ["bytemuck", "serde"] }
 ktx2 = "0.3.0"
 wgpu = "0.20.1"
-gltf = "1.4.1"
+gltf = { version = "1.4.1", features = ["KHR_lights_punctual", "extensions", "extras"] }
 
 [build-dependencies]
 miette = { version = "7.2.0", features = ["fancy"] }

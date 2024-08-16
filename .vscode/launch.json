@@ -7,16 +7,16 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in library 'eframe_template'",
+            "name": "Debug unit tests in library 'jm_gltf_renderer'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
                     "--lib",
-                    "--package=eframe_template"
+                    "--package=jm_gltf_renderer"
                 ],
                 "filter": {
-                    "name": "eframe_template",
+                    "name": "jm_gltf_renderer",
                     "kind": "lib"
                 }
             },
@@ -26,15 +26,15 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'eframe_template'",
+            "name": "Debug executable 'jm_gltf_renderer'",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=eframe_template",
-                    "--package=eframe_template"
+                    "--bin=jm_gltf_renderer",
+                    "--package=jm_gltf_renderer"
                 ],
                 "filter": {
-                    "name": "eframe_template",
+                    "name": "jm_gltf_renderer",
                     "kind": "bin"
                 }
             },
@@ -44,16 +44,16 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in executable 'eframe_template'",
+            "name": "Debug unit tests in executable 'jm_gltf_renderer'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
-                    "--bin=eframe_template",
-                    "--package=eframe_template"
+                    "--bin=jm_gltf_renderer",
+                    "--package=jm_gltf_renderer"
                 ],
                 "filter": {
-                    "name": "eframe_template",
+                    "name": "jm_gltf_renderer",
                     "kind": "bin"
                 }
             },

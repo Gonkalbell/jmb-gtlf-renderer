@@ -3,12 +3,14 @@ mod camera;
 #[allow(clippy::all)]
 mod shaders;
 
-use std::{collections::HashMap, f32::consts::TAU, primitive};
+use std::{collections::HashMap, f32::consts::TAU, primitive, sync::Arc};
 
 use eframe::wgpu;
 use glam::{Mat4, Vec3A};
+use gltf::{buffer, mesh::Mode};
 use puffin::profile_function;
-use wgpu::util::DeviceExt;
+use serde::Serialize;
+use wgpu::{util::DeviceExt, BufferUsages};
 
 use camera::ArcBallCamera;
 
@@ -35,15 +37,18 @@ struct Node {
 
 struct Primitive {
     pipeline: wgpu::RenderPipeline,
-    buffers: Vec<wgpu::Buffer>,
+    attrib_buffers: Vec<Arc<wgpu::Buffer>>,
     draw_count: u32,
     index_data: Option<PrimitiveIndexData>,
 }
 
 struct PrimitiveIndexData {
-    buffer: wgpu::Buffer,
-    // offset: u32,
+    buffer: Arc<wgpu::Buffer>,
     format: wgpu::IndexFormat,
+}
+
+struct Mesh {
+    primitives: Vec<Primitive>,
 }
 
 pub struct SceneRenderer {
@@ -58,8 +63,43 @@ pub struct SceneRenderer {
     skybox_pipeline: wgpu::RenderPipeline,
 
     // dummy_primitive: Primitive,
-    nodes: HashMap<usize, Node>,
-    meshes: HashMap<usize, Vec<Primitive>>,
+    nodes: Vec<Node>,
+    meshes: Vec<Mesh>,
+}
+
+fn get_vertex_format(accessor: &gltf::Accessor) -> wgpu::VertexFormat {
+    use gltf::accessor::{DataType, Dimensions};
+    match (
+        accessor.normalized(),
+        accessor.data_type(),
+        accessor.dimensions(),
+    ) {
+        (true, DataType::I8, Dimensions::Vec2) => wgpu::VertexFormat::Snorm8x2,
+        (true, DataType::I8, Dimensions::Vec4) => wgpu::VertexFormat::Snorm8x4,
+        (true, DataType::U8, Dimensions::Vec2) => wgpu::VertexFormat::Unorm8x2,
+        (true, DataType::U8, Dimensions::Vec4) => wgpu::VertexFormat::Unorm8x4,
+        (true, DataType::I16, Dimensions::Vec2) => wgpu::VertexFormat::Snorm16x2,
+        (true, DataType::I16, Dimensions::Vec4) => wgpu::VertexFormat::Snorm16x4,
+        (true, DataType::U16, Dimensions::Vec2) => wgpu::VertexFormat::Unorm16x2,
+        (true, DataType::U16, Dimensions::Vec4) => wgpu::VertexFormat::Unorm16x4,
+        (false, DataType::I8, Dimensions::Vec2) => wgpu::VertexFormat::Sint8x2,
+        (false, DataType::I8, Dimensions::Vec4) => wgpu::VertexFormat::Sint8x4,
+        (false, DataType::U8, Dimensions::Vec2) => wgpu::VertexFormat::Uint8x2,
+        (false, DataType::U8, Dimensions::Vec4) => wgpu::VertexFormat::Uint8x4,
+        (false, DataType::I16, Dimensions::Vec2) => wgpu::VertexFormat::Sint16x2,
+        (false, DataType::I16, Dimensions::Vec4) => wgpu::VertexFormat::Sint16x4,
+        (false, DataType::U16, Dimensions::Vec2) => wgpu::VertexFormat::Uint16x2,
+        (false, DataType::U16, Dimensions::Vec4) => wgpu::VertexFormat::Uint16x4,
+        (false, DataType::U32, Dimensions::Scalar) => wgpu::VertexFormat::Uint32,
+        (false, DataType::U32, Dimensions::Vec2) => wgpu::VertexFormat::Uint32x2,
+        (false, DataType::U32, Dimensions::Vec3) => wgpu::VertexFormat::Uint32x3,
+        (false, DataType::U32, Dimensions::Vec4) => wgpu::VertexFormat::Uint32x4,
+        (_, DataType::F32, Dimensions::Scalar) => wgpu::VertexFormat::Float32,
+        (_, DataType::F32, Dimensions::Vec2) => wgpu::VertexFormat::Float32x2,
+        (_, DataType::F32, Dimensions::Vec3) => wgpu::VertexFormat::Float32x3,
+        (_, DataType::F32, Dimensions::Vec4) => wgpu::VertexFormat::Float32x4,
+        _ => unimplemented!(),
+    }
 }
 
 impl SceneRenderer {
@@ -169,81 +209,38 @@ impl SceneRenderer {
 
         // Load the GLTF scene
 
-        let (doc, buffers, images) =
+        let (doc, buffer_data, image_data) =
             gltf::import("assets/models/AntiqueCamera/glTF/AntiqueCamera.gltf")
                 .expect("Failed to load GLTF file");
 
-        let shader = scene::create_shader_module_embed_source(device);
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("scene primitive"),
-            layout: Some(&scene::create_pipeline_layout(device)),
-            vertex: scene::vertex_state(
-                &shader,
-                &scene::vs_scene_entry(wgpu::VertexStepMode::Vertex),
-            ),
-            fragment: Some(scene::fragment_state(
-                &shader,
-                &scene::fs_scene_entry([Some(color_format.into())]),
-            )),
-            primitive: wgpu::PrimitiveState {
-                front_face: wgpu::FrontFace::Cw,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::LessEqual,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-        });
+        let buffers: Vec<_> = doc
+            .views()
+            .map(|view: gltf::buffer::View| {
+                let data = &buffer_data[view.buffer().index()].0;
+                let contents = &data[view.offset()..view.offset() + view.length()];
+                let usage = BufferUsages::COPY_DST
+                    | match view.target() {
+                        None => BufferUsages::empty(),
+                        Some(gltf::buffer::Target::ArrayBuffer) => BufferUsages::VERTEX,
+                        Some(gltf::buffer::Target::ElementArrayBuffer) => BufferUsages::INDEX,
+                    };
+                Arc::new(
+                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: view.name(),
+                        contents,
+                        usage,
+                    }),
+                )
+            })
+            .collect();
 
-        let mut nodes = HashMap::new();
-        let node_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("DummyNode"),
-            contents: bytemuck::bytes_of(&scene::Node {
-                transform: Mat4::default(),
-                normal_transform: Mat4::default(),
-            }),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-        let bgroup = NodeBindGroup::from_bindings(
-            device,
-            NodeBindGroupEntries::new(NodeBindGroupEntriesParams {
-                res_node: node_buf.as_entire_buffer_binding(),
-            }),
-        );
-        nodes.insert(
-            0,
-            Node {
-                bgroup,
-                mesh_index: 0,
-            },
-        );
+        // Build Nodes
 
-        let vertices = [
-            scene::VertexInput::new(
-                Vec3A::new(-1., -1., 0.),
-                Vec3A::new(-1., -1., 1.).normalize(),
-            ),
-            scene::VertexInput::new(Vec3A::new(1., -1., 0.), Vec3A::new(1., -1., 1.).normalize()),
-            scene::VertexInput::new(Vec3A::new(0., 1., 0.), Vec3A::new(0., 1., 1.).normalize()),
-        ];
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("DummyMesh"),
-            contents: bytemuck::bytes_of(&vertices),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        });
-        let dummy_primitive = Primitive {
-            pipeline,
-            buffers: vec![vertex_buffer],
-            draw_count: 3,
-            index_data: None,
-        };
-        let mut meshes = HashMap::new();
-        meshes.insert(0, vec![dummy_primitive]);
+        let nodes = generate_nodes(&doc, device);
+
+        // Build Meshes
+
+        let meshes = generate_meshes(device, doc, buffers, color_format);
 
         Self {
             user_camera,
@@ -286,15 +283,15 @@ impl SceneRenderer {
 
         self.camera_bgroup.set(rpass);
 
-        for node in self.nodes.values() {
+        for node in &self.nodes {
             node.bgroup.set(rpass);
-            let primitives = self
+            let mesh = self
                 .meshes
-                .get(&node.mesh_index)
+                .get(node.mesh_index)
                 .expect("Node didn't have a mesh");
-            for primitive in primitives {
+            for primitive in &mesh.primitives {
                 rpass.set_pipeline(&primitive.pipeline);
-                for (i, buffer) in primitive.buffers.iter().enumerate() {
+                for (i, buffer) in primitive.attrib_buffers.iter().enumerate() {
                     rpass.set_vertex_buffer(i as _, buffer.slice(..));
                 }
                 if let Some(index_data) = &primitive.index_data {
@@ -341,4 +338,152 @@ impl SceneRenderer {
             puffin_egui::show_viewport_if_enabled(ctx);
         });
     }
+}
+
+fn generate_nodes(doc: &gltf::Document, device: &wgpu::Device) -> Vec<Node> {
+    // Get world transforms
+    let mut nodes_to_visit = Vec::new();
+    for scene in doc.scenes() {
+        nodes_to_visit.extend(scene.nodes().map(|n| (n, Mat4::default())));
+    }
+    let mut world_transforms = vec![Mat4::IDENTITY; doc.nodes().len()];
+    while let Some((node, parent_transform)) = nodes_to_visit.pop() {
+        let transform = Mat4::from_cols_array_2d(&node.transform().matrix());
+        let world_transform = parent_transform * transform;
+        world_transforms[node.index()] = world_transform;
+        nodes_to_visit.extend(node.children().map(|n| (n, world_transform)));
+    }
+    let nodes = doc
+        .nodes()
+        .zip(world_transforms.iter())
+        .map(|(n, t)| {
+            let node_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: n.name(),
+                contents: bytemuck::bytes_of(&scene::Node {
+                    transform: *t,
+                    normal_transform: Mat4::default(),
+                }),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+            let bgroup = NodeBindGroup::from_bindings(
+                device,
+                NodeBindGroupEntries::new(NodeBindGroupEntriesParams {
+                    res_node: node_buf.as_entire_buffer_binding(),
+                }),
+            );
+            Node {
+                bgroup,
+                mesh_index: 0,
+            }
+        })
+        .collect();
+    nodes
+}
+
+fn generate_meshes(device: &wgpu::Device, doc: gltf::Document, buffers: Vec<Arc<wgpu::Buffer>>, color_format: wgpu::TextureFormat) -> Vec<Mesh> {
+    let mut meshes = Vec::new();
+
+    let shader = scene::create_shader_module_embed_source(device);
+
+    for doc_mesh in doc.meshes() {
+        let mut primitives = Vec::new();
+        for doc_primitive in doc_mesh.primitives() {
+            let mut attrib_layouts = Vec::new();
+            let mut attrib_buffers = Vec::new();
+            let mut draw_count = 0u32;
+
+            for (semantic, accessor) in doc_primitive.attributes() {
+                let buffer_view = accessor.view().expect("Accessor should have a buffer view");
+                let shader_location = match semantic {
+                    gltf::Semantic::Positions => 0,
+                    gltf::Semantic::Normals => 1,
+                    _ => continue,
+                };
+
+                let format = get_vertex_format(&accessor);
+                let stride = buffer_view
+                    .stride()
+                    .map(|s| s as u64)
+                    .unwrap_or(format.size());
+                attrib_layouts.push((
+                    stride,
+                    [wgpu::VertexAttribute {
+                        format,
+                        offset: accessor.offset() as _,
+                        shader_location,
+                    }],
+                ));
+
+                attrib_buffers.push(buffers[buffer_view.index()].clone());
+
+                draw_count += accessor.count() as u32;
+            }
+
+            let attrib_buffer_layouts: Vec<_> = attrib_layouts
+                .iter()
+                .map(|(array_stride, attributes)| wgpu::VertexBufferLayout {
+                    array_stride: *array_stride,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes,
+                })
+                .collect();
+
+            let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: doc_mesh.name(),
+                layout: Some(&scene::create_pipeline_layout(device)),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: scene::ENTRY_VS_SCENE,
+                    compilation_options: Default::default(),
+                    buffers: &attrib_buffer_layouts,
+                },
+                fragment: Some(scene::fragment_state(
+                    &shader,
+                    &scene::fs_scene_entry([Some(color_format.into())]),
+                )),
+                primitive: wgpu::PrimitiveState {
+                    topology: match doc_primitive.mode() {
+                        Mode::Points => wgpu::PrimitiveTopology::PointList,
+                        Mode::Lines => wgpu::PrimitiveTopology::LineList,
+                        Mode::LineStrip => wgpu::PrimitiveTopology::LineStrip,
+                        Mode::Triangles => wgpu::PrimitiveTopology::TriangleList,
+                        Mode::TriangleStrip => wgpu::PrimitiveTopology::TriangleStrip,
+                        mode => unimplemented!("format {:?} not supported", mode),
+                    },
+                    cull_mode: Some(wgpu::Face::Back),
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::LessEqual,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+            });
+
+            let index_data = doc_primitive.indices().map(|indices| {
+                use gltf::accessor::DataType;
+                PrimitiveIndexData {
+                    buffer: buffers[indices.view().unwrap().index()].clone(),
+                    format: match indices.data_type() {
+                        DataType::U16 => wgpu::IndexFormat::Uint16,
+                        DataType::U32 => wgpu::IndexFormat::Uint32,
+                        t => unimplemented!("Index type {:?} is not supported", t),
+                    },
+                }
+            });
+
+            primitives.push(Primitive {
+                pipeline,
+                attrib_buffers,
+                draw_count,
+                index_data,
+            });
+        }
+        meshes.push(Mesh { primitives })
+    }
+    meshes
 }
