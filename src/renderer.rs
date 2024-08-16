@@ -350,37 +350,44 @@ fn generate_nodes(doc: &gltf::Document, device: &wgpu::Device) -> Vec<Node> {
     while let Some((node, parent_transform)) = nodes_to_visit.pop() {
         let transform = Mat4::from_cols_array_2d(&node.transform().matrix());
         let world_transform = parent_transform * transform;
-        world_transforms[node.index()] = world_transform;
+        world_transforms[node.index()] = transform;
         nodes_to_visit.extend(node.children().map(|n| (n, world_transform)));
     }
     let nodes = doc
         .nodes()
         .zip(world_transforms.iter())
-        .map(|(n, t)| {
-            let node_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: n.name(),
-                contents: bytemuck::bytes_of(&scene::Node {
-                    transform: *t,
-                    normal_transform: Mat4::default(),
-                }),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            });
-            let bgroup = NodeBindGroup::from_bindings(
-                device,
-                NodeBindGroupEntries::new(NodeBindGroupEntriesParams {
-                    res_node: node_buf.as_entire_buffer_binding(),
-                }),
-            );
-            Node {
-                bgroup,
-                mesh_index: 0,
-            }
+        .filter_map(|(node, &transform)| {
+            node.mesh().map(|mesh| {
+                let node_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: node.name(),
+                    contents: bytemuck::bytes_of(&scene::Node {
+                        transform,
+                        normal_transform: Mat4::default(),
+                    }),
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                });
+                let bgroup = NodeBindGroup::from_bindings(
+                    device,
+                    NodeBindGroupEntries::new(NodeBindGroupEntriesParams {
+                        res_node: node_buf.as_entire_buffer_binding(),
+                    }),
+                );
+                Node {
+                    bgroup,
+                    mesh_index: mesh.index(),
+                }
+            })
         })
         .collect();
     nodes
 }
 
-fn generate_meshes(device: &wgpu::Device, doc: gltf::Document, buffers: Vec<Arc<wgpu::Buffer>>, color_format: wgpu::TextureFormat) -> Vec<Mesh> {
+fn generate_meshes(
+    device: &wgpu::Device,
+    doc: gltf::Document,
+    buffers: Vec<Arc<wgpu::Buffer>>,
+    color_format: wgpu::TextureFormat,
+) -> Vec<Mesh> {
     let mut meshes = Vec::new();
 
     let shader = scene::create_shader_module_embed_source(device);
@@ -416,7 +423,7 @@ fn generate_meshes(device: &wgpu::Device, doc: gltf::Document, buffers: Vec<Arc<
 
                 attrib_buffers.push(buffers[buffer_view.index()].clone());
 
-                draw_count += accessor.count() as u32;
+                draw_count = accessor.count() as u32;
             }
 
             let attrib_buffer_layouts: Vec<_> = attrib_layouts
@@ -451,12 +458,13 @@ fn generate_meshes(device: &wgpu::Device, doc: gltf::Document, buffers: Vec<Arc<
                         mode => unimplemented!("format {:?} not supported", mode),
                     },
                     cull_mode: Some(wgpu::Face::Back),
+                    front_face: wgpu::FrontFace::Ccw,
                     ..Default::default()
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: DEPTH_FORMAT,
                     depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::LessEqual,
+                    depth_compare: wgpu::CompareFunction::Less,
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
@@ -466,6 +474,7 @@ fn generate_meshes(device: &wgpu::Device, doc: gltf::Document, buffers: Vec<Arc<
 
             let index_data = doc_primitive.indices().map(|indices| {
                 use gltf::accessor::DataType;
+                draw_count = indices.count() as _;
                 PrimitiveIndexData {
                     buffer: buffers[indices.view().unwrap().index()].clone(),
                     format: match indices.data_type() {
