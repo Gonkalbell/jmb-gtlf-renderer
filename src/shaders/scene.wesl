@@ -1,4 +1,4 @@
-#import bgroup_camera::res_camera
+import super::bgroup_camera::res_camera;
 
 struct Material {
     base_color_factor: vec4f,
