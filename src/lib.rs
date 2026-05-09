@@ -5,6 +5,8 @@ mod asset;
 mod camera;
 mod skybox;
 
+mod rt;
+
 #[allow(clippy::all)]
 mod shaders;
 

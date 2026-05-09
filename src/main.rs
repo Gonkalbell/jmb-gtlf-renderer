@@ -1,21 +1,44 @@
 #![warn(clippy::all, rust_2018_idioms)]
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
+use eframe::egui_wgpu::WgpuSetupCreateNew;
+
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
 #[tokio::main]
 async fn main() -> eframe::Result {
-    use eframe::egui;
+    use std::sync::Arc;
+
+    use eframe::{NativeOptions, egui};
 
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
 
-    let native_options = eframe::NativeOptions {
+    let native_options = NativeOptions {
         viewport: egui::ViewportBuilder::default().with_icon(
             // NOTE: Adding an icon is optional
             eframe::icon_data::from_png_bytes(&include_bytes!("../assets/icon-256.png")[..])
                 .expect("Failed to load icon"),
         ),
-        wgpu_options: Default::default(),
+        wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
+            wgpu_setup: eframe::egui_wgpu::WgpuSetup::CreateNew(
+                eframe::egui_wgpu::WgpuSetupCreateNew {
+                    device_descriptor: Arc::new(|_| wgpu::DeviceDescriptor {
+                        experimental_features: unsafe { wgpu::ExperimentalFeatures::enabled() },
+                        required_features: wgpu::Features::EXPERIMENTAL_RAY_QUERY
+                            | wgpu::Features::EXPERIMENTAL_RAY_HIT_VERTEX_RETURN
+                            | wgpu::Features::BUFFER_BINDING_ARRAY
+                            | wgpu::Features::TEXTURE_BINDING_ARRAY
+                            | wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY,
+                        required_limits: wgpu::Limits::downlevel_webgl2_defaults()
+                            .using_minimum_supported_acceleration_structure_values(),
+                        ..Default::default()
+                    }),
+                    ..WgpuSetupCreateNew::without_display_handle()
+                },
+            ),
+
+            ..Default::default()
+        },
         depth_buffer: 32,
         ..Default::default()
     };
