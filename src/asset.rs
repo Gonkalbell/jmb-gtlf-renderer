@@ -1,3 +1,5 @@
+use crate::rt::{self, Example};
+
 use super::{
     DEPTH_FORMAT, OwnedBufferSlice, bind_groups,
     shaders::scene::{self, Instance, VertexInput},
@@ -14,7 +16,7 @@ use std::{
 use glam::{Mat3, Mat4, Quat, Vec3, Vec4};
 use image::DynamicImage;
 use reqwest::Url;
-use wgpu::util::DeviceExt;
+use wgpu::util::{DeviceExt, RenderEncoder};
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct OwnedVertexBufferLayout {
@@ -28,9 +30,10 @@ struct PipelineCacheKey {
     primitive_state: wgpu::PrimitiveState,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct Asset {
     info: String,
+    pub rt: Example,
     pipeline_batches: Vec<PipelineBatch>,
     instance_bgroup: bind_groups::Instance,
 }
@@ -43,32 +46,34 @@ impl Asset {
     pub fn render(&self, rpass: &mut wgpu::RenderPass<'_>) {
         self.instance_bgroup.set(rpass);
 
-        for pipeline_batch in self.pipeline_batches.iter() {
-            rpass.set_pipeline(&pipeline_batch.pipeline);
+        // for pipeline_batch in self.pipeline_batches.iter() {
+        //     rpass.set_pipeline(&pipeline_batch.pipeline);
 
-            for material_batch in pipeline_batch.material_batches.iter() {
-                material_batch.material.set(rpass);
+        //     for material_batch in pipeline_batch.material_batches.iter() {
+        //         material_batch.material.set(rpass);
 
-                for primitive in material_batch.mesh_primitives.iter() {
-                    for (i, attrib) in primitive.attrib_buffers.iter().enumerate() {
-                        rpass.set_vertex_buffer(i as _, attrib.as_slice());
-                    }
+        //         for primitive in material_batch.mesh_primitives.iter() {
+        //             for (i, attrib) in primitive.attrib_buffers.iter().enumerate() {
+        //                 rpass.set_vertex_buffer(i as _, attrib.as_slice());
+        //             }
 
-                    if let Some(index_data) = &primitive.index_data {
-                        rpass.set_index_buffer(
-                            index_data.buffer_slice.as_slice(),
-                            index_data.format,
-                        );
-                    }
+        //             if let Some(index_data) = &primitive.index_data {
+        //                 rpass.set_index_buffer(
+        //                     index_data.buffer_slice.as_slice(),
+        //                     index_data.format,
+        //                 );
+        //             }
 
-                    if primitive.index_data.is_none() {
-                        rpass.draw(0..primitive.draw_count, primitive.instances.clone());
-                    } else {
-                        rpass.draw_indexed(0..primitive.draw_count, 0, primitive.instances.clone());
-                    }
-                }
-            }
-        }
+        //             if primitive.index_data.is_none() {
+        //                 rpass.draw(0..primitive.draw_count, primitive.instances.clone());
+        //             } else {
+        //                 rpass.draw_indexed(0..primitive.draw_count, 0, primitive.instances.clone());
+        //             }
+        //         }
+        //     }
+        // }
+
+        self.rt.render(rpass);
     }
 }
 
@@ -295,9 +300,12 @@ pub async fn load_asset(
         loading_progress.loaded = loading_progress.total;
     }
 
+    let rt = rt::Example::init(device, queue, 128., 128., color_format);
+
     log::info!("finished loading {}", &url);
     Ok(Asset {
         info: asset_info,
+        rt,
         pipeline_batches,
         instance_bgroup,
     })

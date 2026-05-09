@@ -68,12 +68,13 @@ fn create_vertices() -> (Vec<Vertex>, Vec<u16>) {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
 struct Uniforms {
     view_inverse: Mat4,
     proj_inverse: Mat4,
 }
 
+#[derive(Clone, Debug)]
 pub struct Example {
     uniforms: Uniforms,
     uniform_buf: wgpu::Buffer,

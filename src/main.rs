@@ -29,7 +29,7 @@ async fn main() -> eframe::Result {
                             | wgpu::Features::BUFFER_BINDING_ARRAY
                             | wgpu::Features::TEXTURE_BINDING_ARRAY
                             | wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY,
-                        required_limits: wgpu::Limits::downlevel_webgl2_defaults()
+                        required_limits: wgpu::Limits::defaults()
                             .using_minimum_supported_acceleration_structure_values(),
                         ..Default::default()
                     }),

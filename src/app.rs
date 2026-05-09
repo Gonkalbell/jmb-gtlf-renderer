@@ -11,7 +11,6 @@ use puffin::profile_function;
 use reqwest::Url;
 use serde::Deserialize;
 
-use crate::rt;
 use crate::{
     ASSETS_BASE_URL,
     asset::{self, Asset, LoadingProgress},
@@ -34,8 +33,7 @@ pub struct RendererApp {
 
     skybox: Skybox,
 
-    // asset: Arc<RwLock<Option<Asset>>>,
-    rtscene: Arc<Mutex<rt::Example>>,
+    asset: Arc<RwLock<Option<Asset>>>,
 
     asset_list: Arc<RwLock<Vec<ModelLinkInfo>>>,
     loading_progress: Arc<Mutex<LoadingProgress>>,
@@ -85,24 +83,40 @@ impl RendererApp {
         let camera = ArcBallCamera::new(&device);
         let skybox = Skybox::new(&device, &queue, target_format);
 
-        let rtscene = rt::Example::init(&device, &queue, 128., 128., target_format);
+        let asset = Arc::new(RwLock::new(None));
+        {
+            let loading_progress = loading_progress.clone();
+            let asset = asset.clone();
+            crate::spawn(async move {
+                let url = Url::parse(ASSETS_BASE_URL)
+                    .unwrap()
+                    .join("AntiqueCamera/glTF-Binary/AntiqueCamera.glb")
+                    .unwrap();
+                let loaded_asset =
+                    asset::load_asset(url, &device, &queue, target_format, loading_progress)
+                        .await
+                        .unwrap();
+                if let Ok(mut writer) = asset.write() {
+                    *writer = Some(loaded_asset);
+                };
+            });
+        }
+
         Self {
             camera,
             skybox,
-            // asset,
+            asset,
             asset_list,
             loading_progress,
-
-            rtscene: Arc::new(Mutex::new(rtscene)),
         }
     }
 
     fn show_info_menu(&self, render_state: &eframe::egui_wgpu::RenderState, ui: &mut egui::Ui) {
-        // if let Ok(Some(asset)) = self.asset.read().as_deref() {
-        //     ui.menu_button("Asset", |ui| {
-        //         ui.label(asset.info());
-        //     });
-        // }
+        if let Ok(Some(asset)) = self.asset.read().as_deref() {
+            ui.menu_button("Asset", |ui| {
+                ui.label(asset.info());
+            });
+        }
         ui.menu_button("Adapter", |ui| {
             let info = render_state.adapter.get_info();
             ui.label(format!("name: {}", info.name));
@@ -200,7 +214,7 @@ impl RendererApp {
                     ui.menu_button(&model.label, |ui| {
                         for (variant, file) in &model.variants {
                             if ui.button(variant).clicked() {
-                                // let asset = self.asset.clone();
+                                let asset = self.asset.clone();
                                 let egui_wgpu::RenderState {
                                     device,
                                     queue,
@@ -212,20 +226,20 @@ impl RendererApp {
                                     .join(&format!("{}/{}/{}", &model.name, variant, file))
                                     .unwrap();
                                 let loading_progress = self.loading_progress.clone();
-                                // crate::spawn(async move {
-                                //     let loaded_asset = asset::load_asset(
-                                //         url,
-                                //         &device,
-                                //         &queue,
-                                //         target_format,
-                                //         loading_progress,
-                                //     )
-                                //     .await
-                                //     .unwrap();
-                                //     if let Ok(mut writer) = asset.write() {
-                                //         *writer = Some(loaded_asset);
-                                //     };
-                                // });
+                                crate::spawn(async move {
+                                    let loaded_asset = asset::load_asset(
+                                        url,
+                                        &device,
+                                        &queue,
+                                        target_format,
+                                        loading_progress,
+                                    )
+                                    .await
+                                    .unwrap();
+                                    if let Ok(mut writer) = asset.write() {
+                                        *writer = Some(loaded_asset);
+                                    };
+                                });
                             }
                         }
                     });
@@ -276,8 +290,7 @@ impl eframe::App for RendererApp {
                     RenderCallback {
                         camera: self.camera.clone(),
                         skybox: self.skybox.clone(),
-                        rtscene: self.rtscene.clone(),
-                        // asset: self.asset.clone(),
+                        asset: self.asset.clone(),
                     },
                 ));
         });
@@ -304,8 +317,7 @@ struct RenderCallback {
 
     skybox: Skybox,
 
-    // asset: Arc<RwLock<Option<Asset>>>,
-    rtscene: Arc<Mutex<rt::Example>>,
+    asset: Arc<RwLock<Option<Asset>>>,
 }
 
 impl CallbackTrait for RenderCallback {
@@ -317,14 +329,10 @@ impl CallbackTrait for RenderCallback {
     ) {
         profile_function!();
 
-        self.camera.bgroup.set(render_pass);
+        // self.camera.bgroup.set(render_pass);
 
-        // if let Ok(Some(asset)) = self.asset.read().as_deref() {
-        //     asset.render(render_pass);
-        // }
-
-        if let Ok(mut rtscene) = self.rtscene.lock() {
-            rtscene.render(render_pass);
+        if let Ok(Some(asset)) = self.asset.read().as_deref() {
+            asset.render(render_pass);
         }
 
         // self.skybox.render(render_pass);
@@ -340,13 +348,13 @@ impl CallbackTrait for RenderCallback {
     ) -> Vec<eframe::wgpu::CommandBuffer> {
         profile_function!();
         self.camera.update_buffer(queue);
-        if let Ok(mut rtscene) = self.rtscene.lock() {
-            rtscene.resize(
+        if let Ok(Some(asset)) = self.asset.write().as_deref_mut() {
+            asset.rt.resize(
                 queue,
                 screen_descriptor.size_in_pixels[0] as f32,
                 screen_descriptor.size_in_pixels[1] as f32,
             );
-            rtscene.update(device, queue);
+            asset.rt.update(device, queue);
         }
         Vec::new()
     }
