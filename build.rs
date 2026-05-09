@@ -1,7 +1,7 @@
 use wesl::{Mangler, Wesl};
 use wgsl_to_wgpu::{
     MatrixVectorTypes, Module, ModulePath, TypePath, ValidationOptions, WgslCapabilities,
-    WriteOptions, demangle_identity,
+    WriteOptions,
 };
 
 // src/build.rs
@@ -54,7 +54,6 @@ pub fn demangle_wesl(name: &str, root: &ModulePath) -> TypePath {
         let mangler = wesl::EscapeMangler;
 
         let (path, name) = mangler.unmangle(name).unwrap();
-        dbg!(&path, &name);
 
         // Assume all wesl paths are absolute paths.
         TypePath {

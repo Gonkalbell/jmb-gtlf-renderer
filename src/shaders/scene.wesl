@@ -3,6 +3,9 @@ import super::bgroup_camera::res_camera;
 struct Material {
     base_color_factor: vec4f,
     alpha_cutoff: f32,
+    _padding0: f32,
+    _padding1: f32,
+    _padding2: f32,
 };
 
 @group(1) @binding(0) var<uniform> material_data: Material;

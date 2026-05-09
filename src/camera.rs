@@ -7,7 +7,7 @@ use wgpu::util::DeviceExt;
 
 use crate::{bind_groups, shaders::bgroup_camera};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct ArcBallCamera {
     pub params: ArcBallCameraParams,
     pub bgroup: bind_groups::Camera,
@@ -27,9 +27,9 @@ impl ArcBallCamera {
 
         let bgroup = bind_groups::Camera::from_bindings(
             device,
-            bind_groups::CameraEntries::new(bind_groups::CameraEntriesParams {
+            bind_groups::CameraLayout {
                 res_camera: buffer.as_entire_buffer_binding(),
-            }),
+            },
         );
         Self {
             params,

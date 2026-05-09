@@ -30,21 +30,17 @@ const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 pub mod bind_groups {
     use super::shaders::*;
 
-    pub type Camera = bgroup_camera::WgpuBindGroup0;
-    pub type CameraEntries<'a> = bgroup_camera::WgpuBindGroup0Entries<'a>;
-    pub type CameraEntriesParams<'a> = bgroup_camera::WgpuBindGroup0EntriesParams<'a>;
+    pub type Camera = scene::bind_groups::BindGroup0;
+    pub type CameraLayout<'a> = scene::bind_groups::BindGroupLayout0<'a>;
 
-    pub type Material = scene::WgpuBindGroup1;
-    pub type MaterialEntries<'a> = scene::WgpuBindGroup1Entries<'a>;
-    pub type MaterialEntriesParams<'a> = scene::WgpuBindGroup1EntriesParams<'a>;
+    pub type Material = scene::bind_groups::BindGroup1;
+    pub type MaterialLayout<'a> = scene::bind_groups::BindGroupLayout1<'a>;
 
-    pub type Instance = scene::WgpuBindGroup2;
-    pub type InstanceEntries<'a> = scene::WgpuBindGroup2Entries<'a>;
-    pub type InstanceEntriesParams<'a> = scene::WgpuBindGroup2EntriesParams<'a>;
+    pub type Instance = scene::bind_groups::BindGroup2;
+    pub type InstanceLayout<'a> = scene::bind_groups::BindGroupLayout2<'a>;
 
-    pub type Skybox = skybox::WgpuBindGroup1;
-    pub type SkyboxEntries<'a> = skybox::WgpuBindGroup1Entries<'a>;
-    pub type SkyboxEntriesParams<'a> = skybox::WgpuBindGroup1EntriesParams<'a>;
+    pub type Skybox = skybox::bind_groups::BindGroup1;
+    pub type SkyboxLayout<'a> = skybox::bind_groups::BindGroupLayout1<'a>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
