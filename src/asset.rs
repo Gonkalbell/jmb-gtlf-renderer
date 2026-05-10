@@ -1,5 +1,5 @@
 use crate::{
-    rt::{self, Example},
+    raytracing::{self, Example},
     shaders,
 };
 
@@ -312,7 +312,7 @@ pub async fn load_asset(
         loading_progress.loaded = loading_progress.total;
     }
 
-    let rt = rt::Example::init(device, queue, 128., 128., color_format);
+    let rt = raytracing::Example::init(device, queue, 128., 128., color_format);
 
     log::info!("finished loading {}", &url);
     Ok(Asset {

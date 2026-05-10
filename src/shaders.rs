@@ -125,6 +125,147 @@ pub mod bgroup_camera {
         "offset of Camera.proj_to_world does not match WGSL"
     );
 }
+pub mod raytracing {
+    pub mod bind_groups {
+        #[derive(Debug, Clone)]
+        pub struct BindGroup0(wgpu::BindGroup);
+        #[derive(Debug)]
+        pub struct BindGroupLayout0<'a> {
+            pub uniforms: wgpu::BufferBinding<'a>,
+            pub acc_struct: &'a wgpu::Tlas,
+        }
+        const LAYOUT_DESCRIPTOR0: wgpu::BindGroupLayoutDescriptor =
+            wgpu::BindGroupLayoutDescriptor {
+                label: Some("LayoutDescriptor0"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::AccelerationStructure {
+                            vertex_return: false,
+                        },
+                        count: None,
+                    },
+                ],
+            };
+        impl BindGroup0 {
+            pub fn get_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+                device.create_bind_group_layout(&LAYOUT_DESCRIPTOR0)
+            }
+            pub fn from_bindings(device: &wgpu::Device, bindings: BindGroupLayout0) -> Self {
+                let bind_group_layout = device.create_bind_group_layout(&LAYOUT_DESCRIPTOR0);
+                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    layout: &bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::Buffer(bindings.uniforms),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::AccelerationStructure(
+                                bindings.acc_struct,
+                            ),
+                        },
+                    ],
+                    label: Some("BindGroup0"),
+                });
+                Self(bind_group)
+            }
+            pub fn set<P: super::super::SetBindGroup>(&self, pass: &mut P) {
+                pass.set_bind_group(0, &self.0, &[]);
+            }
+            pub fn inner(&self) -> &wgpu::BindGroup {
+                &self.0
+            }
+        }
+        #[derive(Debug, Copy, Clone)]
+        pub struct BindGroups<'a> {
+            pub bind_group0: &'a BindGroup0,
+        }
+        impl BindGroups<'_> {
+            pub fn set<P: super::super::SetBindGroup>(&self, pass: &mut P) {
+                self.bind_group0.set(pass);
+            }
+        }
+    }
+    pub fn set_bind_groups<P: super::SetBindGroup>(
+        pass: &mut P,
+        bind_group0: &bind_groups::BindGroup0,
+    ) {
+        bind_group0.set(pass);
+    }
+    pub fn fs_main_entry(targets: [Option<wgpu::ColorTargetState>; 1]) -> super::FragmentEntry<1> {
+        super::FragmentEntry {
+            entry_point: ENTRY_FS_MAIN,
+            targets,
+            constants: Default::default(),
+        }
+    }
+    pub const SOURCE : & str = "enable wgpu_ray_query;\n\nstruct VertexOutput {\n    @builtin(position)\n    position: vec4<f32>,\n    @location(0)\n    tex_coords: vec2<f32>\n}\n\n@vertex\nfn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {\n    var result: VertexOutput;\n    let x = i32(vertex_index) / 2;\n    let y = i32(vertex_index) & 1;\n    let tc = vec2<f32>(f32(x) * 2.0, f32(y) * 2.0);\n    result.position = vec4<f32>(tc.x * 2.0 - 1.0, 1.0 - tc.y * 2.0, 0.0, 1.0);\n    result.tex_coords = tc;\n    return result;\n}\n\nstruct Uniforms {\n    view_inv: mat4x4<f32>,\n    proj_inv: mat4x4<f32>\n}\n\n@group(0) @binding(0)\nvar<uniform> uniforms: Uniforms;\n\n@group(0) @binding(1)\nvar acc_struct: acceleration_structure;\n\n@fragment\nfn fs_main(vertex: VertexOutput) -> @location(0) vec4<f32> {\n    var color = vec4<f32>(vertex.tex_coords, 0.0, 1.0);\n    let d = vertex.tex_coords * 2.0 - 1.0;\n    let origin = (uniforms.view_inv * vec4<f32>(0.0, 0.0, 0.0, 1.0)).xyz;\n    let temp = uniforms.proj_inv * vec4<f32>(d.x, d.y, 1.0, 1.0);\n    let direction = (uniforms.view_inv * vec4<f32>(normalize(temp.xyz), 0.0)).xyz;\n    var rq: ray_query;\n    rayQueryInitialize(&rq, acc_struct, RayDesc(0u, 255u, 0.1, 200.0, origin, direction));\n    rayQueryProceed(&rq);\n    let intersection = rayQueryGetCommittedIntersection(&rq);\n    if (intersection.kind != RAY_QUERY_INTERSECTION_NONE) {\n        color = vec4<f32>(intersection.barycentrics, 1.0 - intersection.barycentrics.x - intersection.barycentrics.y, 1.0);\n    }\n    return color;\n}\n" ;
+    pub fn create_shader_module(device: &wgpu::Device) -> wgpu::ShaderModule {
+        let source = std::borrow::Cow::Borrowed(SOURCE);
+        device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: None,
+            source: wgpu::ShaderSource::Wgsl(source),
+        })
+    }
+    pub fn create_pipeline_layout(device: &wgpu::Device) -> wgpu::PipelineLayout {
+        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: None,
+            bind_group_layouts: &[Some(&bind_groups::BindGroup0::get_bind_group_layout(
+                device,
+            ))],
+            immediate_size: 0,
+        })
+    }
+    pub const ENTRY_FS_MAIN: &str = "fs_main";
+    pub const ENTRY_VS_MAIN: &str = "vs_main";
+    #[repr(C)]
+    #[derive(
+        Debug,
+        Copy,
+        Clone,
+        PartialEq,
+        bytemuck :: Pod,
+        bytemuck :: Zeroable,
+        serde :: Serialize,
+        serde :: Deserialize,
+    )]
+    pub struct Uniforms {
+        pub view_inv: glam::Mat4,
+        pub proj_inv: glam::Mat4,
+    }
+    const _: () = assert!(
+        std::mem::size_of::<Uniforms>() == 128,
+        "size of Uniforms does not match WGSL"
+    );
+    const _: () = assert!(
+        std::mem::offset_of!(Uniforms, view_inv) == 0,
+        "offset of Uniforms.view_inv does not match WGSL"
+    );
+    const _: () = assert!(
+        std::mem::offset_of!(Uniforms, proj_inv) == 64,
+        "offset of Uniforms.proj_inv does not match WGSL"
+    );
+    pub fn vs_main_entry() -> super::VertexEntry<0> {
+        super::VertexEntry {
+            entry_point: ENTRY_VS_MAIN,
+            buffers: [],
+            constants: Default::default(),
+        }
+    }
+}
 pub mod scene {
     pub mod bind_groups {
         #[derive(Debug, Clone)]

@@ -4,7 +4,7 @@ use std::ops::IndexMut;
 use std::{borrow::Cow, iter, mem};
 use wgpu::util::DeviceExt;
 
-use crate::DEPTH_FORMAT;
+use crate::{DEPTH_FORMAT, shaders};
 
 // from cube
 #[repr(C)]
@@ -80,8 +80,8 @@ pub struct Example {
     uniform_buf: wgpu::Buffer,
     blas: wgpu::Blas,
     tlas: wgpu::Tlas,
-    pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
+    pipeline: wgpu::RenderPipeline,
 }
 
 impl Example {
@@ -150,11 +150,7 @@ impl Example {
             max_instances: side_count * side_count,
         });
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: None,
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("shader.wgsl"))),
-        });
-
+        let shader = shaders::raytracing::create_shader_module(device);
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: None,
             layout: None,

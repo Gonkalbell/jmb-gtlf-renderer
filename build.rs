@@ -42,6 +42,18 @@ fn main() -> anyhow::Result<()> {
     )?;
     std::fs::write("src/shaders.rs", module.to_generated_bindings(options))?;
 
+    let root = ModulePath {
+        components: vec!["raytracing".to_owned()],
+    };
+    module.add_shader_module(
+        &wesl.compile(&"package::raytracing".parse()?)?.to_string(),
+        None,
+        options,
+        root.clone(),
+        |s| demangle_wesl(s, &root),
+    )?;
+    std::fs::write("src/shaders.rs", module.to_generated_bindings(options))?;
+
     Ok(())
 }
 
