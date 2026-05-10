@@ -1,7 +1,7 @@
+use anyhow::Result;
 use wesl::{Mangler, Wesl};
 use wgsl_to_wgpu::{
-    MatrixVectorTypes, Module, ModulePath, TypePath, ValidationOptions, WgslCapabilities,
-    WriteOptions,
+    MatrixVectorTypes, Module, TypePath, WriteOptions,
 };
 
 // src/build.rs
@@ -18,46 +18,42 @@ fn main() -> anyhow::Result<()> {
         validate: None,
     };
 
-    let mut module = Module::default();
-    let root = ModulePath {
-        components: vec!["skybox".to_owned()],
-    };
-    module.add_shader_module(
-        &wesl.compile(&"package::skybox".parse()?)?.to_string(),
-        None,
-        options,
-        root.clone(),
-        |s| demangle_wesl(s, &root),
-    )?;
+    let mut bindings_module = Module::default();
+    add_entry_point_module(&mut bindings_module, &wesl, options, "package::skybox".parse()?)?;
+    add_entry_point_module(&mut bindings_module, &wesl, options, "package::scene".parse()?)?;
+    add_entry_point_module(&mut bindings_module, &wesl, options, "package::raytracing".parse()?)?;
 
-    let root = ModulePath {
-        components: vec!["scene".to_owned()],
-    };
-    module.add_shader_module(
-        &wesl.compile(&"package::scene".parse()?)?.to_string(),
-        None,
-        options,
-        root.clone(),
-        |s| demangle_wesl(s, &root),
-    )?;
-    std::fs::write("src/shaders.rs", module.to_generated_bindings(options))?;
-
-    let root = ModulePath {
-        components: vec!["raytracing".to_owned()],
-    };
-    module.add_shader_module(
-        &wesl.compile(&"package::raytracing".parse()?)?.to_string(),
-        None,
-        options,
-        root.clone(),
-        |s| demangle_wesl(s, &root),
-    )?;
-    std::fs::write("src/shaders.rs", module.to_generated_bindings(options))?;
+    std::fs::write("src/shaders.rs", bindings_module.to_generated_bindings(options))?;
 
     Ok(())
 }
 
-pub fn demangle_wesl(name: &str, root: &ModulePath) -> TypePath {
+fn add_entry_point_module(
+    bindings_module: &mut Module,
+    wesl: &Wesl<wesl::StandardResolver>,
+    options: WriteOptions,
+    root: wesl::ModulePath,
+) -> Result<()> {
+    let compiled = &wesl.compile(&root)?;
+    wesl::emit_rerun_if_changed(&compiled.modules, wesl.resolver());
+
+    bindings_module.add_shader_module(
+        &compiled.to_string(),
+        None,
+        options,
+        convert_wesl_module_path(root.clone()),
+        |s| demangle_wesl(s, &root),
+    )?;
+    Ok(())
+}
+
+pub fn convert_wesl_module_path(path: wesl::ModulePath) -> wgsl_to_wgpu::ModulePath {
+    wgsl_to_wgpu::ModulePath {
+        components: path.components,
+    }
+}
+
+pub fn demangle_wesl(name: &str, root: &wesl::ModulePath) -> TypePath {
     // Assume all paths are absolute paths.
     if name.starts_with("package_") {
         // Use the root module if unmangle fails.
@@ -67,15 +63,13 @@ pub fn demangle_wesl(name: &str, root: &ModulePath) -> TypePath {
 
         // Assume all wesl paths are absolute paths.
         TypePath {
-            parent: ModulePath {
-                components: path.components,
-            },
+            parent: convert_wesl_module_path(path),
             name,
         }
     } else {
         // Use the root module if the name is not mangled.
         wgsl_to_wgpu::TypePath {
-            parent: root.clone(),
+            parent: convert_wesl_module_path(root.clone()),
             name: name.to_string(),
         }
     }
