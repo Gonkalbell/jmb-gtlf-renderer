@@ -1,8 +1,9 @@
 use wgpu::util::DeviceExt;
 
+use crate::shaders;
 use crate::{DEPTH_FORMAT, bind_groups, shaders::skybox};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Skybox {
     skybox_bgroup: bind_groups::Skybox,
     skybox_pipeline: wgpu::RenderPipeline,
@@ -48,7 +49,7 @@ impl Skybox {
 
         let skybox_bgroup = bind_groups::Skybox::from_bindings(
             device,
-            bind_groups::SkyboxEntries::new(bind_groups::SkyboxEntriesParams {
+            bind_groups::SkyboxLayout {
                 res_texture: &skybox_tview,
                 res_sampler: &device.create_sampler(&wgpu::SamplerDescriptor {
                     label: Some("skybox sampler"),
@@ -60,15 +61,15 @@ impl Skybox {
                     mipmap_filter: wgpu::MipmapFilterMode::Linear,
                     ..Default::default()
                 }),
-            }),
+            },
         );
 
-        let shader = skybox::create_shader_module_embed_source(device);
+        let shader = skybox::create_shader_module(device);
         let skybox_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("skybox"),
             layout: Some(&skybox::create_pipeline_layout(device)),
-            vertex: skybox::vertex_state(&shader, &skybox::vs_skybox_entry()),
-            fragment: Some(skybox::fragment_state(
+            vertex: shaders::vertex_state(&shader, &skybox::vs_skybox_entry()),
+            fragment: Some(shaders::fragment_state(
                 &shader,
                 &skybox::fs_skybox_entry([Some(color_format.into())]),
             )),

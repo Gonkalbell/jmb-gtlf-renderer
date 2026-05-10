@@ -1,4 +1,7 @@
-use crate::rt::{self, Example};
+use crate::{
+    rt::{self, Example},
+    shaders,
+};
 
 use super::{
     DEPTH_FORMAT, OwnedBufferSlice, bind_groups,
@@ -77,16 +80,23 @@ impl Asset {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 struct PipelineBatch {
     pipeline: wgpu::RenderPipeline,
     material_batches: Vec<MaterialBatch>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 struct MaterialBatch {
     material: bind_groups::Material,
     mesh_primitives: Vec<MeshPrimitive>,
+}
+
+impl PartialEq for MaterialBatch {
+    fn eq(&self, other: &Self) -> bool {
+        self.material.inner() == other.material.inner()
+            && self.mesh_primitives == other.mesh_primitives
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -246,7 +256,9 @@ pub async fn load_asset(
     let defualt_material_data = scene::Material {
         base_color_factor: glam::Vec4::ONE,
         alpha_cutoff: 0.,
-        _pad_alpha_cutoff: Default::default(),
+        _padding0: Default::default(),
+        _padding1: Default::default(),
+        _padding2: Default::default(),
     };
     let default_material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Material Data"),
@@ -255,11 +267,11 @@ pub async fn load_asset(
     });
     let default_material_bgroup = bind_groups::Material::from_bindings(
         device,
-        bind_groups::MaterialEntries::new(bind_groups::MaterialEntriesParams {
+        bind_groups::MaterialLayout {
             material_data: default_material_buffer.as_entire_buffer_binding(),
             base_color_texture: &default_texture.create_view(&Default::default()),
             base_color_sampler: &default_sampler,
-        }),
+        },
     );
 
     let materials = generate_materials(
@@ -474,7 +486,9 @@ fn generate_materials(
                     doc_material.pbr_metallic_roughness().base_color_factor(),
                 ),
                 alpha_cutoff: doc_material.alpha_cutoff().unwrap_or(0.),
-                _pad_alpha_cutoff: Default::default(),
+                _padding0: Default::default(),
+                _padding1: Default::default(),
+                _padding2: Default::default(),
             };
             let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Material Data"),
@@ -497,11 +511,11 @@ fn generate_materials(
                 .unwrap_or(default_sampler);
             bind_groups::Material::from_bindings(
                 device,
-                bind_groups::MaterialEntries::new(bind_groups::MaterialEntriesParams {
+                bind_groups::MaterialLayout {
                     material_data: material_buffer.as_entire_buffer_binding(),
                     base_color_texture,
                     base_color_sampler,
-                }),
+                },
             )
         })
         .collect()
@@ -585,9 +599,9 @@ fn generate_nodes(
 
     let instance_bgroup = bind_groups::Instance::from_bindings(
         device,
-        bind_groups::InstanceEntries::new(bind_groups::InstanceEntriesParams {
+        bind_groups::InstanceLayout {
             res_instances: instance_buf.as_entire_buffer_binding(),
-        }),
+        },
     );
 
     (instance_bgroup, mesh_instance_ranges)
@@ -604,12 +618,12 @@ fn generate_meshes(
 ) -> Vec<PipelineBatch> {
     use gltf::mesh::Mode;
 
-    let shader = scene::create_shader_module_embed_source(device);
+    let shader = scene::create_shader_module(device);
 
     let default_vertex_input = VertexInput {
         position: Default::default(),
-        normal: Vec3::ZERO,
-        tangent: Vec4::ZERO,
+        normal: Default::default(),
+        tangent: Default::default(),
         texcoord_0: Default::default(),
         texcoord_1: Default::default(),
         color_0: Vec4::ONE,
@@ -757,7 +771,7 @@ fn generate_meshes(
             let material_batch = pipeline_batch
                 .material_batches
                 .iter_mut()
-                .find(|b| b.material == material_bgroup);
+                .find(|b| b.material.inner() == material_bgroup.inner());
             let material_batch = match material_batch {
                 Some(b) => b,
                 None => pipeline_batch.material_batches.push_mut(MaterialBatch {
@@ -809,7 +823,7 @@ fn create_pipeline(
             compilation_options: Default::default(),
             buffers: &attrib_buffer_layouts,
         },
-        fragment: Some(scene::fragment_state(
+        fragment: Some(shaders::fragment_state(
             shader,
             &scene::fs_scene_entry([Some(color_format.into())]),
         )),

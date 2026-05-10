@@ -1,8 +1,11 @@
-#import bgroup_camera::res_camera
+import super::bgroup_camera::res_camera;
 
 struct Material {
     base_color_factor: vec4f,
     alpha_cutoff: f32,
+    _padding0: f32,
+    _padding1: f32,
+    _padding2: f32,
 };
 
 @group(1) @binding(0) var<uniform> material_data: Material;
@@ -16,8 +19,8 @@ struct Instance {
 @group(2) @binding(0) var<storage> res_instances: array<Instance>;
 
 struct VertexInput {
-    @location(0) position: vec3f,
-    @location(1) normal: vec3f,
+    @location(0) position: vec4f,
+    @location(1) normal: vec4f,
     @location(2) tangent: vec4f,
     @location(3) texcoord_0: vec2f,
     @location(4) texcoord_1: vec2f,
@@ -42,9 +45,9 @@ struct VertexOutput {
 fn vs_scene(@builtin(instance_index) instance_index: u32, input: VertexInput) -> VertexOutput {
     var output: VertexOutput;
     var instance = res_instances[instance_index];
-    output.position = res_camera.world_to_proj * instance.local_to_world * vec4f(input.position, 1);
-    output.view_position = res_camera.world_to_local * instance.local_to_world * vec4f(input.position, 1);
-    output.normal = (res_camera.world_to_local * instance.normal_local_to_world * vec4f(input.normal, 0)).xyz;
+    output.position = res_camera.world_to_proj * instance.local_to_world * vec4f(input.position.xyz, 1);
+    output.view_position = res_camera.world_to_local * instance.local_to_world * vec4f(input.position.xyz, 1);
+    output.normal = (res_camera.world_to_local * instance.normal_local_to_world * vec4f(input.normal.xyz, 0)).xyz;
     output.tangent = (res_camera.world_to_local * instance.normal_local_to_world * vec4f(input.tangent.xyz, 0)).xyz;
 
     output.texcoord_0 = input.texcoord_0;

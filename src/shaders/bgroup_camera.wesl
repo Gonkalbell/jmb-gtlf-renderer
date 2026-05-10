@@ -1,5 +1,3 @@
-#define_import_path bgroup_camera
-
 struct Camera {
     world_to_local: mat4x4<f32>,
     local_to_world: mat4x4<f32>,
