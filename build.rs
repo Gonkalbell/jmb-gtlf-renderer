@@ -15,9 +15,7 @@ fn main() -> anyhow::Result<()> {
         derive_serde: true,
         matrix_vector_types: MatrixVectorTypes::Glam,
         rustfmt: true,
-        validate: Some(ValidationOptions {
-            capabilities: WgslCapabilities::default(),
-        }),
+        validate: None,
     };
 
     let mut module = Module::default();

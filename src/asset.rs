@@ -613,8 +613,8 @@ fn generate_meshes(
 
     let default_vertex_input = VertexInput {
         position: Default::default(),
-        normal: Vec3::ZERO,
-        tangent: Vec4::ZERO,
+        normal: Default::default(),
+        tangent: Default::default(),
         texcoord_0: Default::default(),
         texcoord_1: Default::default(),
         color_0: Vec4::ONE,
