@@ -9,8 +9,7 @@ enable wgpu_ray_query;
 
 struct SkyboxInterp {
     @builtin(position) position: vec4f,
-    @location(0) tex_coords: vec2<f32>,
-    @location(1) texcube_dir: vec3<f32>,
+    @location(0) ray_dir: vec3<f32>,
 };
 
 @vertex
@@ -23,35 +22,29 @@ fn vs_skybox(@builtin(vertex_index) vertex_index: u32) -> SkyboxInterp {
         f32(y) * 2.0
     );
     let pos = vec4f(
-        tc.x * 2.0 - 1.0,
-        1.0 - tc.y * 2.0,
+        1.0 - 2.0 * tc,
         0.0, 1.0
     );
 
     var result: SkyboxInterp;
     result.position = pos;
-    result.tex_coords = tc;
     let dir = vec4f((res_camera.proj_to_local * pos).xyz, 0.0);
-    result.texcube_dir = (res_camera.local_to_world * dir).xyz;
+    result.ray_dir = (res_camera.local_to_world * dir).xyz;
     return result;
 }
 
 @fragment
 fn fs_skybox(vertex: SkyboxInterp) -> @location(0) vec4f {
-    let d = vertex.tex_coords * 2.0 - 1.0;
-
     let origin = (res_camera.world_to_local * vec4f(0.0, 0.0, 0.0, 1.0)).xyz;
-    let temp = res_camera.proj_to_local * vec4f(d.x, d.y, 1.0, 1.0);
-    let direction = (res_camera.world_to_local * vec4f(normalize(temp.xyz), 0.0)).xyz;
 
     var rq: ray_query;
-    rayQueryInitialize(&rq, acc_struct, RayDesc(0u, 0xFFu, 0.1, 200.0, origin, direction));
+    rayQueryInitialize(&rq, acc_struct, RayDesc(0u, 0xFFu, 0.1, 200.0, origin, vertex.ray_dir));
     rayQueryProceed(&rq);
 
     let intersection = rayQueryGetCommittedIntersection(&rq);
     var result =  vec4f(0.0);
     if intersection.kind == RAY_QUERY_INTERSECTION_NONE {
-        result = textureSample(res_texture, res_sampler, vertex.texcube_dir);
+        result = textureSample(res_texture, res_sampler, vertex.ray_dir);
     } else {
         result = vec4f(intersection.barycentrics, 1.0 - intersection.barycentrics.x - intersection.barycentrics.y, 1.0);
     }
