@@ -120,7 +120,7 @@ impl Example {
             },
         );
 
-        let tlas = device.create_tlas(&wgpu::CreateTlasDescriptor {
+        let mut tlas = device.create_tlas(&wgpu::CreateTlasDescriptor {
             label: None,
             flags: wgpu::AccelerationStructureFlags::PREFER_FAST_TRACE,
             update_mode: wgpu::AccelerationStructureUpdateMode::Build,
@@ -154,6 +154,50 @@ impl Example {
             }),
             iter::once(&tlas),
         );
+
+        queue.submit(Some(encoder.finish()));
+
+        // scene update
+        let dist = 12.0;
+
+        let side_count = 8;
+
+        let anim_time = 0.;
+
+        for x in 0..side_count {
+            for y in 0..side_count {
+                let instance = tlas.index_mut((x + y * side_count) as usize);
+
+                let x = x as f32 / (side_count - 1) as f32;
+                let y = y as f32 / (side_count - 1) as f32;
+                let x = x * 2.0 - 1.0;
+                let y = y * 2.0 - 1.0;
+
+                let transform = Mat4::from_rotation_translation(
+                    Quat::from_euler(
+                        glam::EulerRot::XYZ,
+                        anim_time * 0.5 * 0.342,
+                        anim_time * 0.5 * 0.254,
+                        anim_time * 0.5 * 0.832,
+                    ),
+                    Vec3 {
+                        x: x * dist,
+                        y: y * dist,
+                        z: -24.0,
+                    },
+                );
+                let transform = transform.transpose().to_cols_array()[..12]
+                    .try_into()
+                    .unwrap();
+
+                *instance = Some(wgpu::TlasInstance::new(&blas, transform, 0, 0xff));
+            }
+        }
+
+        let mut encoder =
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+
+        encoder.build_acceleration_structures(iter::empty(), iter::once(&tlas));
 
         queue.submit(Some(encoder.finish()));
 

@@ -8,7 +8,7 @@ enable wgpu_ray_query;
 @group(2) @binding(0) var acc_struct: acceleration_structure;
 
 struct SkyboxInterp {
-    @builtin(position) position: vec4<f32>,
+    @builtin(position) position: vec4f,
     @location(0) tex_coords: vec2<f32>,
     @location(1) texcube_dir: vec3<f32>,
 };
@@ -22,7 +22,7 @@ fn vs_skybox(@builtin(vertex_index) vertex_index: u32) -> SkyboxInterp {
         f32(x) * 2.0,
         f32(y) * 2.0
     );
-    let pos = vec4<f32>(
+    let pos = vec4f(
         tc.x * 2.0 - 1.0,
         1.0 - tc.y * 2.0,
         0.0, 1.0
@@ -31,29 +31,29 @@ fn vs_skybox(@builtin(vertex_index) vertex_index: u32) -> SkyboxInterp {
     var result: SkyboxInterp;
     result.position = pos;
     result.tex_coords = tc;
-    let dir = vec4<f32>((res_camera.proj_to_local * pos).xyz, 0.0);
+    let dir = vec4f((res_camera.proj_to_local * pos).xyz, 0.0);
     result.texcube_dir = (res_camera.local_to_world * dir).xyz;
     return result;
 }
 
 @fragment
-fn fs_skybox(vertex: SkyboxInterp) -> @location(0) vec4<f32> {
-	let d = vertex.tex_coords * 2.0 - 1.0;
+fn fs_skybox(vertex: SkyboxInterp) -> @location(0) vec4f {
+    let d = vertex.tex_coords * 2.0 - 1.0;
 
-	let origin = (res_camera.world_to_local * vec4<f32>(0.0,0.0,0.0,1.0)).xyz;
-	let temp = res_camera.proj_to_local * vec4<f32>(d.x, d.y, 1.0, 1.0);
-	let direction = (res_camera.world_to_local * vec4<f32>(normalize(temp.xyz), 0.0)).xyz;
+    let origin = (res_camera.world_to_local * vec4f(0.0, 0.0, 0.0, 1.0)).xyz;
+    let temp = res_camera.proj_to_local * vec4f(d.x, d.y, 1.0, 1.0);
+    let direction = (res_camera.world_to_local * vec4f(normalize(temp.xyz), 0.0)).xyz;
 
     var rq: ray_query;
     rayQueryInitialize(&rq, acc_struct, RayDesc(0u, 0xFFu, 0.1, 200.0, origin, direction));
     rayQueryProceed(&rq);
 
     let intersection = rayQueryGetCommittedIntersection(&rq);
-    var result = vec4f(0);
-    if (intersection.kind == RAY_QUERY_INTERSECTION_NONE) {
+    var result =  vec4f(0.0);
+    if intersection.kind == RAY_QUERY_INTERSECTION_NONE {
         result = textureSample(res_texture, res_sampler, vertex.texcube_dir);
     } else {
-        result = vec4<f32>(intersection.barycentrics, 1.0 - intersection.barycentrics.x - intersection.barycentrics.y, 1.0);
+        result = vec4f(intersection.barycentrics, 1.0 - intersection.barycentrics.x - intersection.barycentrics.y, 1.0);
     }
     return result;
 }
