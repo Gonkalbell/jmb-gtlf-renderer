@@ -1,8 +1,6 @@
 use anyhow::Result;
 use wesl::{Mangler, Wesl};
-use wgsl_to_wgpu::{
-    MatrixVectorTypes, Module, TypePath, WriteOptions,
-};
+use wgsl_to_wgpu::{MatrixVectorTypes, Module, TypePath, WriteOptions};
 
 // src/build.rs
 fn main() -> anyhow::Result<()> {
@@ -19,11 +17,24 @@ fn main() -> anyhow::Result<()> {
     };
 
     let mut bindings_module = Module::default();
-    add_entry_point_module(&mut bindings_module, &wesl, options, "package::skybox".parse()?)?;
-    add_entry_point_module(&mut bindings_module, &wesl, options, "package::scene".parse()?)?;
+    add_entry_point_module(
+        &mut bindings_module,
+        &wesl,
+        options,
+        "package::skybox".parse()?,
+    )?;
+    add_entry_point_module(
+        &mut bindings_module,
+        &wesl,
+        options,
+        "package::scene".parse()?,
+    )?;
     // add_entry_point_module(&mut bindings_module, &wesl, options, "package::raytracing".parse()?)?;
 
-    std::fs::write("src/shaders.rs", bindings_module.to_generated_bindings(options))?;
+    std::fs::write(
+        "src/shaders.rs",
+        bindings_module.to_generated_bindings(options),
+    )?;
 
     Ok(())
 }

@@ -1,6 +1,4 @@
-use crate::{
-    shaders,
-};
+use crate::shaders;
 
 use super::{
     DEPTH_FORMAT, OwnedBufferSlice, bind_groups,
@@ -18,7 +16,7 @@ use std::{
 use glam::{Mat3, Mat4, Quat, Vec3, Vec4};
 use image::DynamicImage;
 use reqwest::Url;
-use wgpu::util::{DeviceExt, RenderEncoder};
+use wgpu::util::DeviceExt;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct OwnedVertexBufferLayout {

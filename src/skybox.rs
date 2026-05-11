@@ -2,7 +2,7 @@ use wgpu::util::DeviceExt;
 
 use crate::{
     DEPTH_FORMAT, bind_groups,
-    raytracing::{self, Example},
+    raytracing::Example,
     shaders::{self, skybox},
 };
 

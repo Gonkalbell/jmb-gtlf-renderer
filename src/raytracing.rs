@@ -1,59 +1,42 @@
-use bytemuck::{Pod, Zeroable};
-use glam::{Mat4, Quat, Vec3};
+use glam::{Mat4, Vec3, Vec4};
 use std::ops::IndexMut;
-use std::{borrow::Cow, iter, mem};
+use std::{iter, mem};
 use wgpu::util::DeviceExt;
 
 use crate::bind_groups::{self, AccStructure};
-use crate::{DEPTH_FORMAT, shaders};
 
-// from cube
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct Vertex {
-    _pos: [f32; 4],
-    _tex_coord: [f32; 2],
-}
-
-fn vertex(pos: [i8; 3], tc: [i8; 2]) -> Vertex {
-    Vertex {
-        _pos: [pos[0] as f32, pos[1] as f32, pos[2] as f32, 1.0],
-        _tex_coord: [tc[0] as f32, tc[1] as f32],
-    }
-}
-
-fn create_vertices() -> (Vec<Vertex>, Vec<u16>) {
+fn create_vertices() -> (Vec<Vec4>, Vec<u16>) {
     let vertex_data = [
         // top (0, 0, 1)
-        vertex([-1, -1, 1], [0, 0]),
-        vertex([1, -1, 1], [1, 0]),
-        vertex([1, 1, 1], [1, 1]),
-        vertex([-1, 1, 1], [0, 1]),
+        Vec4::new(-1., -1., 1., 1.),
+        Vec4::new(1., -1., 1., 1.),
+        Vec4::new(1., 1., 1., 1.),
+        Vec4::new(-1., 1., 1., 1.),
         // bottom (0, 0, -1)
-        vertex([-1, 1, -1], [1, 0]),
-        vertex([1, 1, -1], [0, 0]),
-        vertex([1, -1, -1], [0, 1]),
-        vertex([-1, -1, -1], [1, 1]),
-        // right (1, 0, 0)
-        vertex([1, -1, -1], [0, 0]),
-        vertex([1, 1, -1], [1, 0]),
-        vertex([1, 1, 1], [1, 1]),
-        vertex([1, -1, 1], [0, 1]),
-        // left (-1, 0, 0)
-        vertex([-1, -1, 1], [1, 0]),
-        vertex([-1, 1, 1], [0, 0]),
-        vertex([-1, 1, -1], [0, 1]),
-        vertex([-1, -1, -1], [1, 1]),
-        // front (0, 1, 0)
-        vertex([1, 1, -1], [1, 0]),
-        vertex([-1, 1, -1], [0, 0]),
-        vertex([-1, 1, 1], [0, 1]),
-        vertex([1, 1, 1], [1, 1]),
-        // back (0, -1, 0)
-        vertex([1, -1, 1], [0, 0]),
-        vertex([-1, -1, 1], [1, 0]),
-        vertex([-1, -1, -1], [1, 1]),
-        vertex([1, -1, -1], [0, 1]),
+        Vec4::new(-1., 1., -1., 1.),
+        Vec4::new(1., 1., -1., 1.),
+        Vec4::new(1., -1., -1., 1.),
+        Vec4::new(-1., -1., -1., 1.),
+        // right (1., 0, 0)
+        Vec4::new(1., -1., -1., 1.),
+        Vec4::new(1., 1., -1., 1.),
+        Vec4::new(1., 1., 1., 1.),
+        Vec4::new(1., -1., 1., 1.),
+        // left (-1., 0, 0)
+        Vec4::new(-1., -1., 1., 1.),
+        Vec4::new(-1., 1., 1., 1.),
+        Vec4::new(-1., 1., -1., 1.),
+        Vec4::new(-1., -1., -1., 1.),
+        // front (0, 1., 0)
+        Vec4::new(1., 1., -1., 1.),
+        Vec4::new(-1., 1., -1., 1.),
+        Vec4::new(-1., 1., 1., 1.),
+        Vec4::new(1., 1., 1., 1.),
+        // back (0, -1., 0)
+        Vec4::new(1., -1., 1., 1.),
+        Vec4::new(-1., -1., 1., 1.),
+        Vec4::new(-1., -1., -1., 1.),
+        Vec4::new(1., -1., -1., 1.),
     ];
 
     let index_data: &[u16] = &[
@@ -68,23 +51,13 @@ fn create_vertices() -> (Vec<Vertex>, Vec<u16>) {
     (vertex_data.to_vec(), index_data.to_vec())
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
-struct Uniforms {
-    view_inverse: Mat4,
-    proj_inverse: Mat4,
-}
-
 #[derive(Clone, Debug)]
 pub struct Example {
     pub bind_group: AccStructure,
 }
 
 impl Example {
-    pub fn init(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue
-    ) -> Self {
+    pub fn init(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let side_count = 8;
 
         let (vertex_data, index_data) = create_vertices();
@@ -127,11 +100,31 @@ impl Example {
             max_instances: side_count * side_count,
         });
 
-        let bind_group_layout = bind_groups::AccStructureLayout {
-            acc_struct: &tlas,
-        };
+        let bind_group_layout = bind_groups::AccStructureLayout { acc_struct: &tlas };
 
         let bind_group = bind_groups::AccStructure::from_bindings(device, bind_group_layout);
+
+        for x in 0..side_count {
+            for y in 0..side_count {
+                let instance = tlas.index_mut((x + y * side_count) as usize);
+
+                let x = x as f32 / (side_count - 1) as f32;
+                let y = y as f32 / (side_count - 1) as f32;
+                let x = x * 2.0 - 1.0;
+                let y = y * 2.0 - 1.0;
+
+                let transform = Mat4::from_translation(Vec3 {
+                    x: x * 12.0,
+                    y: y * 12.0,
+                    z: -24.0,
+                });
+                let transform = transform.transpose().to_cols_array()[..12]
+                    .try_into()
+                    .unwrap();
+
+                *instance = Some(wgpu::TlasInstance::new(&blas, transform, 0, 0xff));
+            }
+        }
 
         let mut encoder =
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
@@ -144,7 +137,7 @@ impl Example {
                         size: &blas_geo_size_desc,
                         vertex_buffer: &vertex_buf,
                         first_vertex: 0,
-                        vertex_stride: mem::size_of::<Vertex>() as u64,
+                        vertex_stride: mem::size_of::<Vec4>() as u64,
                         index_buffer: Some(&index_buf),
                         first_index: Some(0),
                         transform_buffer: None,
@@ -157,52 +150,6 @@ impl Example {
 
         queue.submit(Some(encoder.finish()));
 
-        // scene update
-        let dist = 12.0;
-
-        let side_count = 8;
-
-        let anim_time = 0.;
-
-        for x in 0..side_count {
-            for y in 0..side_count {
-                let instance = tlas.index_mut((x + y * side_count) as usize);
-
-                let x = x as f32 / (side_count - 1) as f32;
-                let y = y as f32 / (side_count - 1) as f32;
-                let x = x * 2.0 - 1.0;
-                let y = y * 2.0 - 1.0;
-
-                let transform = Mat4::from_rotation_translation(
-                    Quat::from_euler(
-                        glam::EulerRot::XYZ,
-                        anim_time * 0.5 * 0.342,
-                        anim_time * 0.5 * 0.254,
-                        anim_time * 0.5 * 0.832,
-                    ),
-                    Vec3 {
-                        x: x * dist,
-                        y: y * dist,
-                        z: -24.0,
-                    },
-                );
-                let transform = transform.transpose().to_cols_array()[..12]
-                    .try_into()
-                    .unwrap();
-
-                *instance = Some(wgpu::TlasInstance::new(&blas, transform, 0, 0xff));
-            }
-        }
-
-        let mut encoder =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-
-        encoder.build_acceleration_structures(iter::empty(), iter::once(&tlas));
-
-        queue.submit(Some(encoder.finish()));
-
-        Example {
-            bind_group,
-        }
+        Example { bind_group }
     }
 }

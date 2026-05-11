@@ -340,9 +340,9 @@ impl CallbackTrait for RenderCallback {
 
     fn prepare(
         &self,
-        device: &eframe::wgpu::Device,
+        _device: &eframe::wgpu::Device,
         queue: &eframe::wgpu::Queue,
-        screen_descriptor: &eframe::egui_wgpu::ScreenDescriptor,
+        _screen_descriptor: &eframe::egui_wgpu::ScreenDescriptor,
         _egui_encoder: &mut eframe::wgpu::CommandEncoder,
         _callback_resources: &mut eframe::egui_wgpu::CallbackResources,
     ) -> Vec<eframe::wgpu::CommandBuffer> {
