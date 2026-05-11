@@ -498,7 +498,7 @@ pub mod skybox {
                 label: Some("LayoutDescriptor0"),
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -588,15 +588,58 @@ pub mod skybox {
                 &self.0
             }
         }
+        #[derive(Debug, Clone)]
+        pub struct BindGroup2(wgpu::BindGroup);
+        #[derive(Debug)]
+        pub struct BindGroupLayout2<'a> {
+            pub acc_struct: &'a wgpu::Tlas,
+        }
+        const LAYOUT_DESCRIPTOR2: wgpu::BindGroupLayoutDescriptor =
+            wgpu::BindGroupLayoutDescriptor {
+                label: Some("LayoutDescriptor2"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::AccelerationStructure {
+                        vertex_return: false,
+                    },
+                    count: None,
+                }],
+            };
+        impl BindGroup2 {
+            pub fn get_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+                device.create_bind_group_layout(&LAYOUT_DESCRIPTOR2)
+            }
+            pub fn from_bindings(device: &wgpu::Device, bindings: BindGroupLayout2) -> Self {
+                let bind_group_layout = device.create_bind_group_layout(&LAYOUT_DESCRIPTOR2);
+                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    layout: &bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::AccelerationStructure(bindings.acc_struct),
+                    }],
+                    label: Some("BindGroup2"),
+                });
+                Self(bind_group)
+            }
+            pub fn set<P: super::super::SetBindGroup>(&self, pass: &mut P) {
+                pass.set_bind_group(2, &self.0, &[]);
+            }
+            pub fn inner(&self) -> &wgpu::BindGroup {
+                &self.0
+            }
+        }
         #[derive(Debug, Copy, Clone)]
         pub struct BindGroups<'a> {
             pub bind_group0: &'a BindGroup0,
             pub bind_group1: &'a BindGroup1,
+            pub bind_group2: &'a BindGroup2,
         }
         impl BindGroups<'_> {
             pub fn set<P: super::super::SetBindGroup>(&self, pass: &mut P) {
                 self.bind_group0.set(pass);
                 self.bind_group1.set(pass);
+                self.bind_group2.set(pass);
             }
         }
     }
@@ -604,9 +647,11 @@ pub mod skybox {
         pass: &mut P,
         bind_group0: &bind_groups::BindGroup0,
         bind_group1: &bind_groups::BindGroup1,
+        bind_group2: &bind_groups::BindGroup2,
     ) {
         bind_group0.set(pass);
         bind_group1.set(pass);
+        bind_group2.set(pass);
     }
     pub fn fs_skybox_entry(
         targets: [Option<wgpu::ColorTargetState>; 1],
@@ -617,7 +662,7 @@ pub mod skybox {
             constants: Default::default(),
         }
     }
-    pub const SOURCE : & str = "enable wgpu_ray_query;\n\n@group(1) @binding(0)\nvar res_texture: texture_cube<f32>;\n\n@group(1) @binding(1)\nvar res_sampler: sampler;\n\nstruct SkyboxInterp {\n    @builtin(position)\n    position: vec4<f32>,\n    @location(0)\n    tex_coords: vec2<f32>,\n    @location(1)\n    texcube_dir: vec3<f32>\n}\n\n@vertex\nfn vs_skybox(@builtin(vertex_index) vertex_index: u32) -> SkyboxInterp {\n    let x = i32(vertex_index) / 2;\n    let y = i32(vertex_index) & 1;\n    let tc = vec2<f32>(f32(x) * 2.0, f32(y) * 2.0);\n    let pos = vec4<f32>(tc.x * 2.0 - 1.0, 1.0 - tc.y * 2.0, 0.0, 1.0);\n    var result: SkyboxInterp;\n    result.position = pos;\n    result.tex_coords = tc;\n    let dir = vec4<f32>((package__1bgroup_camera__1res_camera.proj_to_local * pos).xyz, 0.0);\n    result.texcube_dir = (package__1bgroup_camera__1res_camera.local_to_world * dir).xyz;\n    return result;\n}\n\n@fragment\nfn fs_skybox(vertex: SkyboxInterp) -> @location(0) vec4<f32> {\n    var result = vec4f(0);\n    result = textureSample(res_texture, res_sampler, vertex.texcube_dir);\n    return result;\n}\n\nstruct package__1bgroup_camera_Camera {\n    world_to_local: mat4x4<f32>,\n    local_to_world: mat4x4<f32>,\n    local_to_proj: mat4x4<f32>,\n    proj_to_local: mat4x4<f32>,\n    world_to_proj: mat4x4<f32>,\n    proj_to_world: mat4x4<f32>\n}\n\n@group(0) @binding(0)\nvar<uniform> package__1bgroup_camera__1res_camera: package__1bgroup_camera_Camera;\n" ;
+    pub const SOURCE : & str = "enable wgpu_ray_query;\n\n@group(1) @binding(0)\nvar res_texture: texture_cube<f32>;\n\n@group(1) @binding(1)\nvar res_sampler: sampler;\n\n@group(2) @binding(0)\nvar acc_struct: acceleration_structure;\n\nstruct SkyboxInterp {\n    @builtin(position)\n    position: vec4<f32>,\n    @location(0)\n    tex_coords: vec2<f32>,\n    @location(1)\n    texcube_dir: vec3<f32>\n}\n\n@vertex\nfn vs_skybox(@builtin(vertex_index) vertex_index: u32) -> SkyboxInterp {\n    let x = i32(vertex_index) / 2;\n    let y = i32(vertex_index) & 1;\n    let tc = vec2<f32>(f32(x) * 2.0, f32(y) * 2.0);\n    let pos = vec4<f32>(tc.x * 2.0 - 1.0, 1.0 - tc.y * 2.0, 0.0, 1.0);\n    var result: SkyboxInterp;\n    result.position = pos;\n    result.tex_coords = tc;\n    let dir = vec4<f32>((package__1bgroup_camera__1res_camera.proj_to_local * pos).xyz, 0.0);\n    result.texcube_dir = (package__1bgroup_camera__1res_camera.local_to_world * dir).xyz;\n    return result;\n}\n\n@fragment\nfn fs_skybox(vertex: SkyboxInterp) -> @location(0) vec4<f32> {\n    let d = vertex.tex_coords * 2.0 - 1.0;\n    let origin = (package__1bgroup_camera__1res_camera.world_to_local * vec4<f32>(0.0, 0.0, 0.0, 1.0)).xyz;\n    let temp = package__1bgroup_camera__1res_camera.proj_to_local * vec4<f32>(d.x, d.y, 1.0, 1.0);\n    let direction = (package__1bgroup_camera__1res_camera.world_to_local * vec4<f32>(normalize(temp.xyz), 0.0)).xyz;\n    var rq: ray_query;\n    rayQueryInitialize(&rq, acc_struct, RayDesc(0u, 255u, 0.1, 200.0, origin, direction));\n    rayQueryProceed(&rq);\n    let intersection = rayQueryGetCommittedIntersection(&rq);\n    var result = vec4f(0);\n    if (intersection.kind == RAY_QUERY_INTERSECTION_NONE) {\n        result = textureSample(res_texture, res_sampler, vertex.texcube_dir);\n    }\n    else {\n        result = vec4<f32>(intersection.barycentrics, 1.0 - intersection.barycentrics.x - intersection.barycentrics.y, 1.0);\n    }\n    return result;\n}\n\nstruct package__1bgroup_camera_Camera {\n    world_to_local: mat4x4<f32>,\n    local_to_world: mat4x4<f32>,\n    local_to_proj: mat4x4<f32>,\n    proj_to_local: mat4x4<f32>,\n    world_to_proj: mat4x4<f32>,\n    proj_to_world: mat4x4<f32>\n}\n\n@group(0) @binding(0)\nvar<uniform> package__1bgroup_camera__1res_camera: package__1bgroup_camera_Camera;\n" ;
     pub fn create_shader_module(device: &wgpu::Device) -> wgpu::ShaderModule {
         let source = std::borrow::Cow::Borrowed(SOURCE);
         device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -631,6 +676,7 @@ pub mod skybox {
             bind_group_layouts: &[
                 Some(&bind_groups::BindGroup0::get_bind_group_layout(device)),
                 Some(&bind_groups::BindGroup1::get_bind_group_layout(device)),
+                Some(&bind_groups::BindGroup2::get_bind_group_layout(device)),
             ],
             immediate_size: 0,
         })

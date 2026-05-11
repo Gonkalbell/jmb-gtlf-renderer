@@ -5,7 +5,7 @@ mod asset;
 mod camera;
 mod skybox;
 
-// mod raytracing;
+mod raytracing;
 
 #[allow(clippy::all)]
 mod shaders;
@@ -32,8 +32,8 @@ const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 pub mod bind_groups {
     use super::shaders::*;
 
-    pub type Camera = scene::bind_groups::BindGroup0;
-    pub type CameraLayout<'a> = scene::bind_groups::BindGroupLayout0<'a>;
+    pub type Camera = skybox::bind_groups::BindGroup0;
+    pub type CameraLayout<'a> = skybox::bind_groups::BindGroupLayout0<'a>;
 
     pub type Material = scene::bind_groups::BindGroup1;
     pub type MaterialLayout<'a> = scene::bind_groups::BindGroupLayout1<'a>;
@@ -44,8 +44,8 @@ pub mod bind_groups {
     pub type Skybox = skybox::bind_groups::BindGroup1;
     pub type SkyboxLayout<'a> = skybox::bind_groups::BindGroupLayout1<'a>;
 
-    // pub type AccStructure = skybox::bind_groups::BindGroup2;
-    // pub type AccStructureLayout<'a> = skybox::bind_groups::BindGroupLayout2<'a>;
+    pub type AccStructure = skybox::bind_groups::BindGroup2;
+    pub type AccStructureLayout<'a> = skybox::bind_groups::BindGroupLayout2<'a>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
