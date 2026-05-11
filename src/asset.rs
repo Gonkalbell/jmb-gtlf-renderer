@@ -1,5 +1,4 @@
 use crate::{
-    raytracing::{self, Example},
     shaders,
 };
 
@@ -36,7 +35,6 @@ struct PipelineCacheKey {
 #[derive(Clone, Debug)]
 pub struct Asset {
     info: String,
-    pub rt: Example,
     pipeline_batches: Vec<PipelineBatch>,
     instance_bgroup: bind_groups::Instance,
 }
@@ -75,8 +73,6 @@ impl Asset {
         //         }
         //     }
         // }
-
-        self.rt.render(rpass);
     }
 }
 
@@ -312,12 +308,9 @@ pub async fn load_asset(
         loading_progress.loaded = loading_progress.total;
     }
 
-    let rt = raytracing::Example::init(device, queue, 128., 128., color_format);
-
     log::info!("finished loading {}", &url);
     Ok(Asset {
         info: asset_info,
-        rt,
         pipeline_batches,
         instance_bgroup,
     })

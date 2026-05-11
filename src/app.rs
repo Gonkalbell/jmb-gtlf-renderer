@@ -329,13 +329,13 @@ impl CallbackTrait for RenderCallback {
     ) {
         profile_function!();
 
-        // self.camera.bgroup.set(render_pass);
+        self.camera.bgroup.set(render_pass);
 
-        if let Ok(Some(asset)) = self.asset.read().as_deref() {
-            asset.render(render_pass);
-        }
+        // if let Ok(Some(asset)) = self.asset.read().as_deref() {
+        //     asset.render(render_pass);
+        // }
 
-        // self.skybox.render(render_pass);
+        self.skybox.render(render_pass);
     }
 
     fn prepare(
@@ -348,14 +348,6 @@ impl CallbackTrait for RenderCallback {
     ) -> Vec<eframe::wgpu::CommandBuffer> {
         profile_function!();
         self.camera.update_buffer(queue);
-        if let Ok(Some(asset)) = self.asset.write().as_deref_mut() {
-            asset.rt.resize(
-                queue,
-                screen_descriptor.size_in_pixels[0] as f32,
-                screen_descriptor.size_in_pixels[1] as f32,
-            );
-            asset.rt.update(device, queue);
-        }
         Vec::new()
     }
 }

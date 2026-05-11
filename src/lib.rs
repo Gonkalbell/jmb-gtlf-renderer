@@ -5,7 +5,7 @@ mod asset;
 mod camera;
 mod skybox;
 
-mod raytracing;
+// mod raytracing;
 
 #[allow(clippy::all)]
 mod shaders;
@@ -43,6 +43,9 @@ pub mod bind_groups {
 
     pub type Skybox = skybox::bind_groups::BindGroup1;
     pub type SkyboxLayout<'a> = skybox::bind_groups::BindGroupLayout1<'a>;
+
+    // pub type AccStructure = skybox::bind_groups::BindGroup2;
+    // pub type AccStructureLayout<'a> = skybox::bind_groups::BindGroupLayout2<'a>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

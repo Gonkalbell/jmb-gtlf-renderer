@@ -4,6 +4,7 @@ use std::ops::IndexMut;
 use std::{borrow::Cow, iter, mem};
 use wgpu::util::DeviceExt;
 
+use crate::bind_groups::{self, AccStructure};
 use crate::{DEPTH_FORMAT, shaders};
 
 // from cube
@@ -76,39 +77,15 @@ struct Uniforms {
 
 #[derive(Clone, Debug)]
 pub struct Example {
-    uniforms: Uniforms,
-    uniform_buf: wgpu::Buffer,
-    blas: wgpu::Blas,
-    tlas: wgpu::Tlas,
-    bind_group: wgpu::BindGroup,
-    pipeline: wgpu::RenderPipeline,
+    pub bind_group: AccStructure,
 }
 
 impl Example {
     pub fn init(
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        width: f32,
-        height: f32,
-        format: wgpu::TextureFormat,
+        queue: &wgpu::Queue
     ) -> Self {
         let side_count = 8;
-
-        let uniforms = {
-            let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 2.5), Vec3::ZERO, Vec3::Y);
-            let proj = Mat4::perspective_rh(59.0_f32.to_radians(), width / height, 0.001, 1000.0);
-
-            Uniforms {
-                view_inverse: view.inverse(),
-                proj_inverse: proj.inverse(),
-            }
-        };
-
-        let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Uniform Buffer"),
-            contents: bytemuck::cast_slice(&[uniforms]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
 
         let (vertex_data, index_data) = create_vertices();
 
@@ -150,54 +127,11 @@ impl Example {
             max_instances: side_count * side_count,
         });
 
-        let shader = shaders::raytracing::create_shader_module(device);
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: None,
-            layout: None,
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[Some(format.into())],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::Always),
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+        let bind_group_layout = bind_groups::AccStructureLayout {
+            acc_struct: &tlas,
+        };
 
-        let bind_group_layout = pipeline.get_bind_group_layout(0);
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniform_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::AccelerationStructure(&tlas),
-                },
-            ],
-        });
+        let bind_group = bind_groups::AccStructure::from_bindings(device, bind_group_layout);
 
         let mut encoder =
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
@@ -218,79 +152,13 @@ impl Example {
                     },
                 ]),
             }),
-            // iter::empty(),
             iter::once(&tlas),
         );
 
         queue.submit(Some(encoder.finish()));
 
         Example {
-            uniforms,
-            uniform_buf,
-            blas,
-            tlas,
-            pipeline,
             bind_group,
         }
-    }
-
-    pub fn resize(&mut self, queue: &wgpu::Queue, width: f32, height: f32) {
-        let proj = Mat4::perspective_rh(59.0_f32.to_radians(), width / height, 0.001, 1000.0);
-
-        self.uniforms.proj_inverse = proj.inverse();
-
-        queue.write_buffer(&self.uniform_buf, 0, bytemuck::cast_slice(&[self.uniforms]));
-    }
-
-    pub fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        // scene update
-        let dist = 12.0;
-
-        let side_count = 8;
-
-        let anim_time = 0.;
-
-        for x in 0..side_count {
-            for y in 0..side_count {
-                let instance = self.tlas.index_mut((x + y * side_count) as usize);
-
-                let x = x as f32 / (side_count - 1) as f32;
-                let y = y as f32 / (side_count - 1) as f32;
-                let x = x * 2.0 - 1.0;
-                let y = y * 2.0 - 1.0;
-
-                let transform = Mat4::from_rotation_translation(
-                    Quat::from_euler(
-                        glam::EulerRot::XYZ,
-                        anim_time * 0.5 * 0.342,
-                        anim_time * 0.5 * 0.254,
-                        anim_time * 0.5 * 0.832,
-                    ),
-                    Vec3 {
-                        x: x * dist,
-                        y: y * dist,
-                        z: -24.0,
-                    },
-                );
-                let transform = transform.transpose().to_cols_array()[..12]
-                    .try_into()
-                    .unwrap();
-
-                *instance = Some(wgpu::TlasInstance::new(&self.blas, transform, 0, 0xff));
-            }
-        }
-
-        let mut encoder =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-
-        encoder.build_acceleration_structures(iter::empty(), iter::once(&self.tlas));
-
-        queue.submit(Some(encoder.finish()));
-    }
-
-    pub fn render(&self, rpass: &mut wgpu::RenderPass) {
-        rpass.set_pipeline(&self.pipeline);
-        rpass.set_bind_group(0, Some(&self.bind_group), &[]);
-        rpass.draw(0..3, 0..1);
     }
 }
