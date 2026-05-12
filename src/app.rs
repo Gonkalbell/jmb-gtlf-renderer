@@ -114,7 +114,7 @@ impl RendererApp {
     fn show_info_menu(&self, render_state: &eframe::egui_wgpu::RenderState, ui: &mut egui::Ui) {
         if let Ok(Some(asset)) = self.asset.read().as_deref() {
             ui.menu_button("Asset", |ui| {
-                ui.label(asset.info());
+                ui.label(asset.info.as_str());
             });
         }
         ui.menu_button("Adapter", |ui| {
@@ -330,12 +330,15 @@ impl CallbackTrait for RenderCallback {
         profile_function!();
 
         self.camera.bgroup.set(render_pass);
+        self.skybox.skybox_bgroup.set(render_pass);
+        self.skybox.default_tlas.set(render_pass);
 
-        // if let Ok(Some(asset)) = self.asset.read().as_deref() {
-        //     asset.render(render_pass);
-        // }
+        if let Ok(Some(asset)) = self.asset.read().as_deref() {
+            asset.tlas_bgroup.set(render_pass);
+        }
 
-        self.skybox.render(render_pass);
+        render_pass.set_pipeline(&self.skybox.skybox_pipeline);
+        render_pass.draw(0..3, 0..1);
     }
 
     fn prepare(

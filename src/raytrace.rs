@@ -10,9 +10,9 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct Skybox {
-    skybox_bgroup: bind_groups::Skybox,
-    skybox_pipeline: wgpu::RenderPipeline,
-    acc_struct_bgroup: bind_groups::AccStructure,
+    pub skybox_bgroup: bind_groups::Skybox,
+    pub skybox_pipeline: wgpu::RenderPipeline,
+    pub default_tlas: bind_groups::AccStructure,
 }
 
 impl Skybox {
@@ -21,7 +21,7 @@ impl Skybox {
         queue: &wgpu::Queue,
         color_format: wgpu::TextureFormat,
     ) -> Skybox {
-        let acc_struct_bgroup = default_acc_struct(device, queue);
+        let default_tlas = default_acc_struct(device, queue);
         let ktx_reader = ktx2::Reader::new(include_bytes!("../assets/rgba8.ktx2"))
             .expect("Failed to find skybox texture");
         let mut image = Vec::with_capacity(ktx_reader.data().len());
@@ -97,17 +97,10 @@ impl Skybox {
         });
 
         Self {
-            acc_struct_bgroup,
+            default_tlas,
             skybox_bgroup,
             skybox_pipeline,
         }
-    }
-
-    pub fn render(&self, rpass: &mut wgpu::RenderPass<'_>) {
-        self.skybox_bgroup.set(rpass);
-        self.acc_struct_bgroup.set(rpass);
-        rpass.set_pipeline(&self.skybox_pipeline);
-        rpass.draw(0..3, 0..1);
     }
 }
 

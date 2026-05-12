@@ -1,4 +1,4 @@
-use crate::shaders;
+use crate::shaders::{self, raytrace};
 
 use super::{
     DEPTH_FORMAT, OwnedBufferSlice, bind_groups,
@@ -12,6 +12,7 @@ use std::{
     ops::Range,
     sync::{Arc, Mutex},
 };
+use std::{iter, mem};
 
 use glam::{Mat3, Mat4, Quat, Vec3, Vec4};
 use image::DynamicImage;
@@ -32,79 +33,8 @@ struct PipelineCacheKey {
 
 #[derive(Clone, Debug)]
 pub struct Asset {
-    info: String,
-    pipeline_batches: Vec<PipelineBatch>,
-    instance_bgroup: bind_groups::Instance,
-}
-
-impl Asset {
-    pub fn info(&self) -> &str {
-        &self.info
-    }
-
-    pub fn render(&self, rpass: &mut wgpu::RenderPass<'_>) {
-        self.instance_bgroup.set(rpass);
-
-        // for pipeline_batch in self.pipeline_batches.iter() {
-        //     rpass.set_pipeline(&pipeline_batch.pipeline);
-
-        //     for material_batch in pipeline_batch.material_batches.iter() {
-        //         material_batch.material.set(rpass);
-
-        //         for primitive in material_batch.mesh_primitives.iter() {
-        //             for (i, attrib) in primitive.attrib_buffers.iter().enumerate() {
-        //                 rpass.set_vertex_buffer(i as _, attrib.as_slice());
-        //             }
-
-        //             if let Some(index_data) = &primitive.index_data {
-        //                 rpass.set_index_buffer(
-        //                     index_data.buffer_slice.as_slice(),
-        //                     index_data.format,
-        //                 );
-        //             }
-
-        //             if primitive.index_data.is_none() {
-        //                 rpass.draw(0..primitive.draw_count, primitive.instances.clone());
-        //             } else {
-        //                 rpass.draw_indexed(0..primitive.draw_count, 0, primitive.instances.clone());
-        //             }
-        //         }
-        //     }
-        // }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct PipelineBatch {
-    pipeline: wgpu::RenderPipeline,
-    material_batches: Vec<MaterialBatch>,
-}
-
-#[derive(Clone, Debug)]
-struct MaterialBatch {
-    material: bind_groups::Material,
-    mesh_primitives: Vec<MeshPrimitive>,
-}
-
-impl PartialEq for MaterialBatch {
-    fn eq(&self, other: &Self) -> bool {
-        self.material.inner() == other.material.inner()
-            && self.mesh_primitives == other.mesh_primitives
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct MeshPrimitive {
-    attrib_buffers: Vec<OwnedBufferSlice>,
-    draw_count: u32,
-    index_data: Option<PrimitiveIndexData>,
-    instances: Range<u32>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct PrimitiveIndexData {
-    format: wgpu::IndexFormat,
-    buffer_slice: OwnedBufferSlice,
+    pub info: String,
+    pub tlas_bgroup: bind_groups::AccStructure,
 }
 
 pub struct LoadingProgress {
@@ -277,17 +207,28 @@ pub async fn load_asset(
         &default_sampler,
     );
 
-    let (instance_bgroup, mesh_instances) = generate_nodes(device, &doc);
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("build acceleration structures"),
+    });
+    let blas = default_blas(device, queue);
 
-    let pipeline_batches = generate_meshes(
-        device,
-        &doc,
-        color_format,
-        &buffer_slices,
-        &mesh_instances,
-        &materials,
-        &default_material_bgroup,
-    );
+    let tlas = generate_tlas(device, &mut encoder, &doc, &blas);
+
+    let tlas_bgroup = bind_groups::AccStructure::from_bindings(device, bind_groups::AccStructureLayout {
+        acc_struct: &tlas,
+    });
+
+    queue.submit(iter::once(encoder.finish()));
+
+    // let pipeline_batches = generate_meshes(
+    //     device,
+    //     &doc,
+    //     color_format,
+    //     &buffer_slices,
+    //     &mesh_instances,
+    //     &materials,
+    //     &default_material_bgroup,
+    // );
 
     let mut asset_info = String::new();
     let json_asset = &doc.as_json().asset;
@@ -309,8 +250,7 @@ pub async fn load_asset(
     log::info!("finished loading {}", &url);
     Ok(Asset {
         info: asset_info,
-        pipeline_batches,
-        instance_bgroup,
+        tlas_bgroup,
     })
 }
 
@@ -515,10 +455,12 @@ fn generate_materials(
 #[derive(Hash, Eq, PartialEq, PartialOrd, Ord)]
 struct MeshIndex(usize);
 
-fn generate_nodes(
+fn generate_tlas(
     device: &wgpu::Device,
+    encoder: &mut wgpu::CommandEncoder,
     doc: &gltf::Document,
-) -> (bind_groups::Instance, HashMap<MeshIndex, Range<u32>>) {
+    blas: &wgpu::Blas,
+) -> wgpu::Tlas {
     // Get world transforms
     let mut nodes_to_visit = Vec::new();
     for doc_scene in doc.scenes() {
@@ -558,279 +500,122 @@ fn generate_nodes(
         *transform = inv_bounding_box_matrix * *transform;
     }
 
-    let mut mesh_instances: HashMap<MeshIndex, Vec<Instance>> = HashMap::new();
-    for (doc_node, &transform) in doc.nodes().zip(world_transforms.iter()) {
-        if let Some(doc_mesh) = doc_node.mesh() {
-            mesh_instances
-                .entry(MeshIndex(doc_mesh.index()))
-                .or_default()
-                .push(Instance {
-                    local_to_world: transform,
-                    normal_local_to_world: Mat4::from_mat3(
-                        Mat3::from_mat4(transform).inverse().transpose(),
-                    ),
-                });
-        }
-    }
-
-    let mut all_instance_data = Vec::new();
-    let mut mesh_instance_ranges: HashMap<MeshIndex, Range<u32>> = HashMap::new();
-    for (mesh_index, instances) in mesh_instances {
-        let start = all_instance_data.len() as u32;
-        all_instance_data.extend_from_slice(&instances);
-        let end = all_instance_data.len() as u32;
-        mesh_instance_ranges.insert(mesh_index, start..end);
-    }
-
-    let instance_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Instances"),
-        contents: bytemuck::cast_slice(&all_instance_data),
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-    });
-
-    let instance_bgroup = bind_groups::Instance::from_bindings(
-        device,
-        bind_groups::InstanceLayout {
-            res_instances: instance_buf.as_entire_buffer_binding(),
-        },
-    );
-
-    (instance_bgroup, mesh_instance_ranges)
-}
-
-fn generate_meshes(
-    device: &wgpu::Device,
-    doc: &gltf::Document,
-    color_format: wgpu::TextureFormat,
-    buffer_slices: &[wgpu::BufferSlice],
-    mesh_instances: &HashMap<MeshIndex, Range<u32>>,
-    materials: &[bind_groups::Material],
-    default_material_bgroup: &bind_groups::Material,
-) -> Vec<PipelineBatch> {
-    use gltf::mesh::Mode;
-
-    let shader = scene::create_shader_module(device);
-
-    let default_vertex_input = VertexInput {
-        position: Default::default(),
-        normal: Default::default(),
-        tangent: Default::default(),
-        texcoord_0: Default::default(),
-        texcoord_1: Default::default(),
-        color_0: Vec4::ONE,
-        color_1: Vec4::ONE,
-    };
-    let default_vertex_buf: wgpu::Buffer =
-        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Default Vertex Input"),
-            contents: bytemuck::bytes_of(&default_vertex_input),
-            usage: wgpu::BufferUsages::COPY_DST
-                | wgpu::BufferUsages::VERTEX
-                | wgpu::BufferUsages::INDEX,
-        });
-    let default_buf_and_layout_iter = VertexInput::VERTEX_ATTRIBUTES.into_iter().map(|attrib| {
-        (
-            OwnedBufferSlice::from_slice(&default_vertex_buf.slice(..)),
-            OwnedVertexBufferLayout {
-                array_stride: 0,
-                attribute: attrib,
-            },
-        )
-    });
-    let semantics = [
-        gltf::Semantic::Positions,
-        gltf::Semantic::Normals,
-        gltf::Semantic::Tangents,
-        gltf::Semantic::TexCoords(0),
-        gltf::Semantic::TexCoords(1),
-        gltf::Semantic::Colors(0),
-        gltf::Semantic::Colors(1),
-    ];
-
-    let default_attributes: HashMap<gltf::Semantic, (OwnedBufferSlice, OwnedVertexBufferLayout)> =
-        HashMap::from_iter(semantics.into_iter().zip(default_buf_and_layout_iter));
-
-    let mut pipeline_batches = HashMap::new();
-    for doc_mesh in doc.meshes() {
-        for doc_primitive in doc_mesh.primitives() {
-            let vertex_count = doc_primitive
-                .attributes()
-                .next()
-                .expect("There should be at least one attribute for each primitive")
-                .1
-                .count();
-
-            let mut attributes = default_attributes.clone();
-            for (semantic, accessor) in doc_primitive.attributes() {
-                let shader_location =
-                    if let Some((_, attrib_layout)) = default_attributes.get(&semantic) {
-                        attrib_layout.attribute.shader_location
-                    } else {
-                        continue;
-                    };
-                let view = accessor.view().unwrap();
-                let format = get_vertex_format(&accessor);
-                let accessor_end = accessor.offset() as wgpu::BufferAddress + format.size();
-                let array_stride = view.stride().map(|s| s as _).unwrap_or(format.size());
-                let buf_slice = buffer_slices[view.index()];
-
-                let (offset, buf_slice) = if accessor_end <= array_stride {
-                    (accessor.offset() as _, buf_slice)
-                } else {
-                    // While normally I can have one wgpu::BufferSlice per gltf::View, some assets use accessors to
-                    // essentially act as a new view rather than an offset into a "stride" sized block. So for these
-                    // cases, I need to treat these accessors as if they have a completely new wgpu::BufferSlice
-                    (
-                        0,
-                        buf_slice.slice(accessor.offset() as wgpu::BufferAddress..),
-                    )
-                };
-
-                let owned_slice = OwnedBufferSlice::from_slice(&buf_slice);
-                let owned_layout = OwnedVertexBufferLayout {
-                    array_stride,
-                    attribute: wgpu::VertexAttribute {
-                        format,
-                        offset,
-                        shader_location,
-                    },
-                };
-
-                attributes.insert(semantic, (owned_slice, owned_layout));
-            }
-
-            let (attrib_buffers, attrib_layouts): (Vec<_>, Vec<_>) =
-                attributes.into_values().unzip();
-
-            let primitive_state = wgpu::PrimitiveState {
-                topology: match doc_primitive.mode() {
-                    Mode::Points => wgpu::PrimitiveTopology::PointList,
-                    Mode::Lines => wgpu::PrimitiveTopology::LineList,
-                    Mode::LineStrip => wgpu::PrimitiveTopology::LineStrip,
-                    Mode::Triangles => wgpu::PrimitiveTopology::TriangleList,
-                    Mode::TriangleStrip => wgpu::PrimitiveTopology::TriangleStrip,
-                    mode => unimplemented!("format {:?} not supported", mode),
-                },
-                cull_mode: if doc_primitive.material().double_sided() {
-                    None
-                } else {
-                    Some(wgpu::Face::Back)
-                },
-                front_face: wgpu::FrontFace::Ccw,
-                ..Default::default()
-            };
-            let key = PipelineCacheKey {
-                attributes: attrib_layouts,
-                primitive_state,
-            };
-
-            let mut draw_count = vertex_count as u32;
-            let index_data = doc_primitive.indices().map(|indices| {
-                use gltf::accessor::DataType;
-                draw_count = indices.count() as _;
-                PrimitiveIndexData {
-                    buffer_slice: OwnedBufferSlice::from_slice(
-                        &buffer_slices[indices.view().unwrap().index()]
-                            .slice(indices.offset() as wgpu::BufferAddress..),
-                    ),
-                    format: match indices.data_type() {
-                        DataType::U16 => wgpu::IndexFormat::Uint16,
-                        DataType::U32 => wgpu::IndexFormat::Uint32,
-                        t => unimplemented!("Index type {:?} is not supported", t),
-                    },
-                }
-            });
-
-            let instances = mesh_instances
-                .get(&MeshIndex(doc_mesh.index()))
-                .unwrap()
-                .clone();
-
-            let pipeline_batch = pipeline_batches.entry(key).or_insert_with_key(|key| {
-                let pipeline = create_pipeline(device, color_format, &shader, None, key);
-                PipelineBatch {
-                    pipeline,
-                    material_batches: Vec::new(),
-                }
-            });
-
-            let material_bgroup = doc_primitive
-                .material()
-                .index()
-                .map(|i| materials[i].clone())
-                .unwrap_or_else(|| default_material_bgroup.clone());
-            let material_batch = pipeline_batch
-                .material_batches
-                .iter_mut()
-                .find(|b| b.material.inner() == material_bgroup.inner());
-            let material_batch = match material_batch {
-                Some(b) => b,
-                None => pipeline_batch.material_batches.push_mut(MaterialBatch {
-                    material: material_bgroup,
-                    mesh_primitives: Vec::new(),
-                }),
-            };
-
-            material_batch.mesh_primitives.push(MeshPrimitive {
-                attrib_buffers,
-                draw_count,
-                index_data,
-                instances,
-            });
-        }
-    }
-
-    pipeline_batches.into_values().collect()
-}
-
-fn create_pipeline(
-    device: &wgpu::Device,
-    color_format: wgpu::TextureFormat,
-    shader: &wgpu::ShaderModule,
-    label: Option<&str>,
-    key: &PipelineCacheKey,
-) -> wgpu::RenderPipeline {
-    let attrib_buffer_layouts: Vec<_> = key
-        .attributes
-        .iter()
-        .map(
-            |OwnedVertexBufferLayout {
-                 array_stride,
-                 attribute,
-             }| wgpu::VertexBufferLayout {
-                array_stride: *array_stride,
-                step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: std::slice::from_ref(attribute),
-            },
-        )
+    let tlas_instances: Vec<_> = doc
+        .nodes()
+        .zip(world_transforms.iter())
+        .filter_map(|(doc_node, &transform)| {
+            doc_node.mesh().map(|doc_mesh| {
+                let transform = transform.transpose().to_cols_array()[..12]
+                    .try_into()
+                    .unwrap();
+                wgpu::TlasInstance::new(blas, transform, 0, 0xFF)
+            })
+        })
         .collect();
 
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label,
-        layout: Some(&scene::create_pipeline_layout(device)),
-        vertex: wgpu::VertexState {
-            module: shader,
-            entry_point: Some(scene::ENTRY_VS_SCENE),
-            compilation_options: Default::default(),
-            buffers: &attrib_buffer_layouts,
-        },
-        fragment: Some(shaders::fragment_state(
-            shader,
-            &scene::fs_scene_entry([Some(color_format.into())]),
-        )),
-        primitive: key.primitive_state,
-        depth_stencil: Some(wgpu::DepthStencilState {
-            format: DEPTH_FORMAT,
-            depth_write_enabled: Some(true),
-            depth_compare: Some(wgpu::CompareFunction::Less),
-            stencil: wgpu::StencilState::default(),
-            bias: wgpu::DepthBiasState::default(),
-        }),
-        multisample: wgpu::MultisampleState::default(),
-        multiview_mask: None,
-        cache: None,
-    })
+    let doc_scene = doc.default_scene().or_else(|| doc.scenes().nth(0)).unwrap();
+    let mut tlas = device.create_tlas(&wgpu::CreateTlasDescriptor {
+        label: doc_scene.name(),
+        max_instances: tlas_instances.len() as _,
+        flags: wgpu::AccelerationStructureFlags::empty(),
+        update_mode: wgpu::AccelerationStructureUpdateMode::Build,
+    });
+
+    for (dst_instance, src_instance) in tlas
+        .get_mut_slice(0..tlas_instances.len())
+        .unwrap()
+        .iter_mut()
+        .zip(tlas_instances)
+    {
+        *dst_instance = Some(src_instance)
+    }
+
+    encoder.build_acceleration_structures(iter::empty(), iter::once(&tlas));
+
+    tlas
 }
+
+// fn generate_meshes(
+//     device: &wgpu::Device,
+//     encoder: &mut wgpu::CommandEncoder,
+//     doc: &gltf::Document,
+//     buffer_slices: &[wgpu::BufferSlice],
+// ) -> Vec<wgpu::Blas> {
+//     use gltf::mesh::Semantic;
+
+//     let blas_entries = doc.meshes().map(|doc_mesh| {
+//         let (geometry, descriptors) = doc_mesh.primitives().map(|doc_primitive| {
+//             let (_, doc_positions) = doc_primitive.attributes().find(|(s, _)| *s == Semantic::Positions).unwrap();
+
+//             let view = doc_positions.view().unwrap();
+//             let format = get_vertex_format(&doc_positions);
+//             let vertex_stride = view.stride().map(|s| s as _).unwrap_or(format.size());
+//             let buf_slice = buffer_slices[view.index()];
+
+//             let (index_format, index_count, index_buffer, first_index) = if let Some(doc_indices) = doc_primitive.indices() {
+//                 use gltf::accessor::DataType;
+//                 let index_format = match doc_indices.data_type() {
+//                         DataType::U16 => wgpu::IndexFormat::Uint16,
+//                         DataType::U32 => wgpu::IndexFormat::Uint32,
+//                         t => unimplemented!("Index type {:?} is not supported", t)
+//                 };
+//                 let index_count = doc_indices.count() as u32;
+//                 let slice = buffer_slices[doc_indices.view().unwrap().index()];
+//                 let index_buffer = slice.buffer();
+//                 let first_index = ((slice.offset() as usize + doc_indices.offset()) / index_format.byte_size()) as u32;
+
+//                 (Some(index_format), Some(index_count), Some(index_buffer), Some(first_index))
+//             } else {
+//                 (None, None, None, None)
+//             };
+
+//             let size = wgpu::BlasTriangleGeometrySizeDescriptor {
+//                 vertex_format: format,
+//                 vertex_count: doc_positions.count() as _,
+//                 index_format,
+//                 index_count,
+//                 flags: wgpu::AccelerationStructureGeometryFlags::OPAQUE,
+//             };
+
+//             let geometry = wgpu::BlasTriangleGeometry {
+//                 size: &size,
+//                 vertex_buffer: buf_slice.buffer(),
+//                 first_vertex: ((buf_slice.offset() + doc_positions.offset() as u64) / format.size()) as u32,
+//                 vertex_stride,
+//                 index_buffer,
+//                 first_index,
+//                 transform_buffer: None,
+//                 transform_buffer_offset: None,
+//             };
+
+//             (geometry, size.clone())
+//         }).unzip();
+
+//         let blas = device.create_blas(&wgpu::CreateBlasDescriptor {
+//             label: doc_mesh.name(),
+//             flags: wgpu::AccelerationStructureFlags::empty(),
+//             update_mode: wgpu::AccelerationStructureUpdateMode::Build,
+//         }, wgpu::BlasGeometrySizeDescriptors::Triangles { descriptors });
+
+//         (blas,  wgpu::BlasGeometries::TriangleGeometries(geometry))
+//     });
+//     let (blases, build_entries): (Vec<_>, Vec<_>) = blas_entries.map(|(blas, geometry)| (blas, wgpu::BlasBuildEntry {
+//         blas: &blas,
+//         geometry,
+//     })).unzip();
+
+//     encoder.build_acceleration_structures(build_entries.iter().by_ref(), []);
+
+//     // let sizes = wgpu::BlasGeometrySizeDescriptors::Triangles { descriptors: () }
+
+//     // BlasBuildEntry {
+//     //     blas: todo!(),
+//     //     geometry: todo!(),
+//     // }
+
+//     // device.create_blas(desc, sizes)
+//     todo!()
+// }
 
 fn get_vertex_format(accessor: &gltf::Accessor) -> wgpu::VertexFormat {
     use gltf::accessor::{DataType, Dimensions};
@@ -865,4 +650,109 @@ fn get_vertex_format(accessor: &gltf::Accessor) -> wgpu::VertexFormat {
         (_, DataType::F32, Dimensions::Vec4) => wgpu::VertexFormat::Float32x4,
         _ => unimplemented!(),
     }
+}
+
+fn create_vertices() -> (Vec<Vec4>, Vec<u16>) {
+    let vertex_data = [
+        // top (0, 0, 1)
+        Vec4::new(-1., -1., 1., 1.),
+        Vec4::new(1., -1., 1., 1.),
+        Vec4::new(1., 1., 1., 1.),
+        Vec4::new(-1., 1., 1., 1.),
+        // bottom (0, 0, -1)
+        Vec4::new(-1., 1., -1., 1.),
+        Vec4::new(1., 1., -1., 1.),
+        Vec4::new(1., -1., -1., 1.),
+        Vec4::new(-1., -1., -1., 1.),
+        // right (1., 0, 0)
+        Vec4::new(1., -1., -1., 1.),
+        Vec4::new(1., 1., -1., 1.),
+        Vec4::new(1., 1., 1., 1.),
+        Vec4::new(1., -1., 1., 1.),
+        // left (-1., 0, 0)
+        Vec4::new(-1., -1., 1., 1.),
+        Vec4::new(-1., 1., 1., 1.),
+        Vec4::new(-1., 1., -1., 1.),
+        Vec4::new(-1., -1., -1., 1.),
+        // front (0, 1., 0)
+        Vec4::new(1., 1., -1., 1.),
+        Vec4::new(-1., 1., -1., 1.),
+        Vec4::new(-1., 1., 1., 1.),
+        Vec4::new(1., 1., 1., 1.),
+        // back (0, -1., 0)
+        Vec4::new(1., -1., 1., 1.),
+        Vec4::new(-1., -1., 1., 1.),
+        Vec4::new(-1., -1., -1., 1.),
+        Vec4::new(1., -1., -1., 1.),
+    ];
+
+    let index_data: &[u16] = &[
+        0, 1, 2, 2, 3, 0, // top
+        4, 5, 6, 6, 7, 4, // bottom
+        8, 9, 10, 10, 11, 8, // right
+        12, 13, 14, 14, 15, 12, // left
+        16, 17, 18, 18, 19, 16, // front
+        20, 21, 22, 22, 23, 20, // back
+    ];
+
+    (vertex_data.to_vec(), index_data.to_vec())
+}
+
+fn default_blas(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Blas {
+    let (vertex_data, index_data) = create_vertices();
+
+    let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Vertex Buffer"),
+        contents: bytemuck::cast_slice(&vertex_data),
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::BLAS_INPUT,
+    });
+
+    let index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Index Buffer"),
+        contents: bytemuck::cast_slice(&index_data),
+        usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::BLAS_INPUT,
+    });
+
+    let blas_geo_size_desc = wgpu::BlasTriangleGeometrySizeDescriptor {
+        vertex_format: wgpu::VertexFormat::Float32x3,
+        vertex_count: vertex_data.len() as u32,
+        index_format: Some(wgpu::IndexFormat::Uint16),
+        index_count: Some(index_data.len() as u32),
+        flags: wgpu::AccelerationStructureGeometryFlags::OPAQUE,
+    };
+
+    let blas = device.create_blas(
+        &wgpu::CreateBlasDescriptor {
+            label: None,
+            flags: wgpu::AccelerationStructureFlags::PREFER_FAST_TRACE,
+            update_mode: wgpu::AccelerationStructureUpdateMode::Build,
+        },
+        wgpu::BlasGeometrySizeDescriptors::Triangles {
+            descriptors: vec![blas_geo_size_desc.clone()],
+        },
+    );
+
+    let mut encoder =
+        device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+
+    encoder.build_acceleration_structures(
+        iter::once(&wgpu::BlasBuildEntry {
+            blas: &blas,
+            geometry: wgpu::BlasGeometries::TriangleGeometries(vec![wgpu::BlasTriangleGeometry {
+                size: &blas_geo_size_desc,
+                vertex_buffer: &vertex_buf,
+                first_vertex: 0,
+                vertex_stride: mem::size_of::<Vec4>() as u64,
+                index_buffer: Some(&index_buf),
+                first_index: Some(0),
+                transform_buffer: None,
+                transform_buffer_offset: None,
+            }]),
+        }),
+        iter::empty(),
+    );
+
+    queue.submit(Some(encoder.finish()));
+
+    blas
 }
