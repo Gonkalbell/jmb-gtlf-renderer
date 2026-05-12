@@ -15,7 +15,7 @@ use crate::{
     ASSETS_BASE_URL,
     asset::{self, Asset, LoadingProgress},
     camera::ArcBallCamera,
-    skybox::Skybox,
+    raytrace::Skybox,
 };
 
 #[derive(Debug, Deserialize)]

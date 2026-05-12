@@ -21,7 +21,7 @@ fn main() -> anyhow::Result<()> {
         &mut bindings_module,
         &wesl,
         options,
-        "package::skybox".parse()?,
+        "package::raytrace".parse()?,
     )?;
     add_entry_point_module(
         &mut bindings_module,
@@ -31,9 +31,15 @@ fn main() -> anyhow::Result<()> {
     )?;
     // add_entry_point_module(&mut bindings_module, &wesl, options, "package::raytracing".parse()?)?;
 
+    let generated_text = format!(r#"
+#![allow(warnings)]
+#![allow(clippy::all)]
+{}
+    "#, bindings_module.to_generated_bindings(options));
+
     std::fs::write(
         "src/shaders.rs",
-        bindings_module.to_generated_bindings(options),
+        generated_text,
     )?;
 
     Ok(())
