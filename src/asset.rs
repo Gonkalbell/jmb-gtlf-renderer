@@ -84,7 +84,8 @@ pub async fn load_asset(
                 contents,
                 usage: wgpu::BufferUsages::COPY_DST
                     | wgpu::BufferUsages::VERTEX
-                    | wgpu::BufferUsages::INDEX,
+                    | wgpu::BufferUsages::INDEX
+                    | wgpu::BufferUsages::BLAS_INPUT,
             })
         })
         .collect();
@@ -214,9 +215,9 @@ pub async fn load_asset(
 
     let _ = (default_material_bgroup, materials);
 
-    let blas = default_blas(device, &mut encoder);
+    let blases = generate_meshes(device, &mut encoder, &doc, &buffer_slices);
 
-    let tlas = generate_tlas(device, &mut encoder, &doc, &blas);
+    let tlas = generate_tlas(device, &mut encoder, &doc, &blases);
 
     let tlas_bgroup = bind_groups::AccStructure::from_bindings(
         device,
@@ -224,16 +225,6 @@ pub async fn load_asset(
     );
 
     queue.submit(iter::once(encoder.finish()));
-
-    // let pipeline_batches = generate_meshes(
-    //     device,
-    //     &doc,
-    //     color_format,
-    //     &buffer_slices,
-    //     &mesh_instances,
-    //     &materials,
-    //     &default_material_bgroup,
-    // );
 
     let mut asset_info = String::new();
     let json_asset = &doc.as_json().asset;
@@ -464,7 +455,7 @@ fn generate_tlas(
     device: &wgpu::Device,
     encoder: &mut wgpu::CommandEncoder,
     doc: &gltf::Document,
-    blas: &wgpu::Blas,
+    blases: &[wgpu::Blas],
 ) -> wgpu::Tlas {
     // Get world transforms
     let mut nodes_to_visit = Vec::new();
@@ -510,6 +501,7 @@ fn generate_tlas(
         .zip(world_transforms.iter())
         .filter_map(|(doc_node, &transform)| {
             doc_node.mesh().map(|doc_mesh| {
+                let blas = &blases[doc_mesh.index()];
                 let transform = transform.transpose().to_cols_array()[..12]
                     .try_into()
                     .unwrap();
@@ -540,87 +532,100 @@ fn generate_tlas(
     tlas
 }
 
-// fn generate_meshes(
-//     device: &wgpu::Device,
-//     encoder: &mut wgpu::CommandEncoder,
-//     doc: &gltf::Document,
-//     buffer_slices: &[wgpu::BufferSlice],
-// ) -> Vec<wgpu::Blas> {
-//     use gltf::mesh::Semantic;
+fn generate_meshes(
+    device: &wgpu::Device,
+    encoder: &mut wgpu::CommandEncoder,
+    doc: &gltf::Document,
+    buffer_slices: &[wgpu::BufferSlice],
+) -> Vec<wgpu::Blas> {
+    use gltf::mesh::Semantic;
 
-//     let blas_entries = doc.meshes().map(|doc_mesh| {
-//         let (geometry, descriptors) = doc_mesh.primitives().map(|doc_primitive| {
-//             let (_, doc_positions) = doc_primitive.attributes().find(|(s, _)| *s == Semantic::Positions).unwrap();
+    let mut blases = Vec::new();
+    for doc_mesh in doc.meshes() {
+        let mut descriptors = Vec::new();
+        let mut geometry_build_fns = Vec::new();
+        for doc_primitive in doc_mesh.primitives() {
+            let (_, doc_positions) = doc_primitive
+                .attributes()
+                .find(|(s, _)| *s == Semantic::Positions)
+                .unwrap();
 
-//             let view = doc_positions.view().unwrap();
-//             let format = get_vertex_format(&doc_positions);
-//             let vertex_stride = view.stride().map(|s| s as _).unwrap_or(format.size());
-//             let buf_slice = buffer_slices[view.index()];
+            let view = doc_positions.view().unwrap();
+            let format = get_vertex_format(&doc_positions);
+            let vertex_stride = view.stride().map(|s| s as _).unwrap_or(format.size());
+            let buf_slice = buffer_slices[view.index()];
 
-//             let (index_format, index_count, index_buffer, first_index) = if let Some(doc_indices) = doc_primitive.indices() {
-//                 use gltf::accessor::DataType;
-//                 let index_format = match doc_indices.data_type() {
-//                         DataType::U16 => wgpu::IndexFormat::Uint16,
-//                         DataType::U32 => wgpu::IndexFormat::Uint32,
-//                         t => unimplemented!("Index type {:?} is not supported", t)
-//                 };
-//                 let index_count = doc_indices.count() as u32;
-//                 let slice = buffer_slices[doc_indices.view().unwrap().index()];
-//                 let index_buffer = slice.buffer();
-//                 let first_index = ((slice.offset() as usize + doc_indices.offset()) / index_format.byte_size()) as u32;
+            let (index_format, index_count, index_buffer, first_index) =
+                if let Some(doc_indices) = doc_primitive.indices() {
+                    use gltf::accessor::DataType;
+                    let index_format = match doc_indices.data_type() {
+                        DataType::U16 => wgpu::IndexFormat::Uint16,
+                        DataType::U32 => wgpu::IndexFormat::Uint32,
+                        t => unimplemented!("Index type {:?} is not supported", t),
+                    };
+                    let index_count = doc_indices.count() as u32;
+                    let slice = buffer_slices[doc_indices.view().unwrap().index()];
+                    let index_buffer = slice.buffer();
+                    let first_index = ((slice.offset() as usize + doc_indices.offset())
+                        / index_format.byte_size()) as u32;
 
-//                 (Some(index_format), Some(index_count), Some(index_buffer), Some(first_index))
-//             } else {
-//                 (None, None, None, None)
-//             };
+                    (
+                        Some(index_format),
+                        Some(index_count),
+                        Some(index_buffer),
+                        Some(first_index),
+                    )
+                } else {
+                    (None, None, None, None)
+                };
 
-//             let size = wgpu::BlasTriangleGeometrySizeDescriptor {
-//                 vertex_format: format,
-//                 vertex_count: doc_positions.count() as _,
-//                 index_format,
-//                 index_count,
-//                 flags: wgpu::AccelerationStructureGeometryFlags::OPAQUE,
-//             };
+            descriptors.push(wgpu::BlasTriangleGeometrySizeDescriptor {
+                vertex_format: format,
+                vertex_count: doc_positions.count() as _,
+                index_format,
+                index_count,
+                flags: wgpu::AccelerationStructureGeometryFlags::OPAQUE,
+            });
 
-//             let geometry = wgpu::BlasTriangleGeometry {
-//                 size: &size,
-//                 vertex_buffer: buf_slice.buffer(),
-//                 first_vertex: ((buf_slice.offset() + doc_positions.offset() as u64) / format.size()) as u32,
-//                 vertex_stride,
-//                 index_buffer,
-//                 first_index,
-//                 transform_buffer: None,
-//                 transform_buffer_offset: None,
-//             };
+            geometry_build_fns.push(move |size| wgpu::BlasTriangleGeometry {
+                size,
+                vertex_buffer: buf_slice.buffer(),
+                first_vertex: ((buf_slice.offset() + doc_positions.offset() as u64) / format.size())
+                    as u32,
+                vertex_stride,
+                index_buffer,
+                first_index,
+                transform_buffer: None,
+                transform_buffer_offset: None,
+            });
+        }
 
-//             (geometry, size.clone())
-//         }).unzip();
+        let blas = blases.push_mut(device.create_blas(
+            &wgpu::CreateBlasDescriptor {
+                label: doc_mesh.name(),
+                flags: wgpu::AccelerationStructureFlags::empty(),
+                update_mode: wgpu::AccelerationStructureUpdateMode::Build,
+            },
+            wgpu::BlasGeometrySizeDescriptors::Triangles {
+                descriptors: descriptors.clone(),
+            },
+        ));
 
-//         let blas = device.create_blas(&wgpu::CreateBlasDescriptor {
-//             label: doc_mesh.name(),
-//             flags: wgpu::AccelerationStructureFlags::empty(),
-//             update_mode: wgpu::AccelerationStructureUpdateMode::Build,
-//         }, wgpu::BlasGeometrySizeDescriptors::Triangles { descriptors });
+        let geometry = wgpu::BlasGeometries::TriangleGeometries(
+            geometry_build_fns
+                .iter()
+                .zip(descriptors.iter())
+                .map(|(f, s)| f(s))
+                .collect(),
+        );
+        encoder.build_acceleration_structures(
+            iter::once(&wgpu::BlasBuildEntry { blas, geometry }),
+            [],
+        );
+    }
 
-//         (blas,  wgpu::BlasGeometries::TriangleGeometries(geometry))
-//     });
-//     let (blases, build_entries): (Vec<_>, Vec<_>) = blas_entries.map(|(blas, geometry)| (blas, wgpu::BlasBuildEntry {
-//         blas: &blas,
-//         geometry,
-//     })).unzip();
-
-//     encoder.build_acceleration_structures(build_entries.iter().by_ref(), []);
-
-//     // let sizes = wgpu::BlasGeometrySizeDescriptors::Triangles { descriptors: () }
-
-//     // BlasBuildEntry {
-//     //     blas: todo!(),
-//     //     geometry: todo!(),
-//     // }
-
-//     // device.create_blas(desc, sizes)
-//     todo!()
-// }
+    blases
+}
 
 fn get_vertex_format(accessor: &gltf::Accessor) -> wgpu::VertexFormat {
     use gltf::accessor::{DataType, Dimensions};
