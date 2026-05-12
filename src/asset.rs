@@ -99,10 +99,15 @@ pub async fn load_asset(
         })
         .collect();
 
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("build acceleration structures"),
+    });
+
     let textures = generate_textures(
         &url,
         device,
         queue,
+        &mut encoder,
         &loading_progress,
         &doc,
         &buffer_contents,
@@ -207,16 +212,16 @@ pub async fn load_asset(
         &default_sampler,
     );
 
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("build acceleration structures"),
-    });
-    let blas = default_blas(device, queue);
+    let _ = (default_material_bgroup, materials);
+
+    let blas = default_blas(device, &mut encoder);
 
     let tlas = generate_tlas(device, &mut encoder, &doc, &blas);
 
-    let tlas_bgroup = bind_groups::AccStructure::from_bindings(device, bind_groups::AccStructureLayout {
-        acc_struct: &tlas,
-    });
+    let tlas_bgroup = bind_groups::AccStructure::from_bindings(
+        device,
+        bind_groups::AccStructureLayout { acc_struct: &tlas },
+    );
 
     queue.submit(iter::once(encoder.finish()));
 
@@ -290,11 +295,12 @@ async fn generate_textures(
     url: &Url,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
+    encoder: &mut wgpu::CommandEncoder,
     loading_progress: &Arc<Mutex<LoadingProgress>>,
     doc: &gltf::Document,
     buffer_contents: &[Vec<u8>],
 ) -> Result<Vec<wgpu::Texture>, anyhow::Error> {
-    futures::future::try_join_all(doc.images().map(|doc_image| {
+    let textures = futures::future::try_join_all(doc.images().map(|doc_image| {
         use gltf::image::Source;
         let source = doc_image.source();
         async {
@@ -370,36 +376,35 @@ async fn generate_textures(
                 size,
             );
 
-            let blitter = wgpu::util::TextureBlitterBuilder::new(device, format)
-                .sample_type(wgpu::FilterMode::Linear)
-                .build();
-
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("blitting"),
-            });
-            for base_mip_level in 1..mip_level_count {
-                blitter.copy(
-                    device,
-                    &mut encoder,
-                    &texture.create_view(&wgpu::TextureViewDescriptor {
-                        base_mip_level: base_mip_level - 1,
-                        mip_level_count: Some(1),
-                        ..Default::default()
-                    }),
-                    &texture.create_view(&wgpu::TextureViewDescriptor {
-                        base_mip_level,
-                        mip_level_count: Some(1),
-                        ..Default::default()
-                    }),
-                );
-            }
-
-            queue.submit([encoder.finish()]);
-
             Ok::<_, anyhow::Error>(texture)
         }
     }))
-    .await
+    .await?;
+
+    for texture in textures.iter() {
+        let blitter = wgpu::util::TextureBlitterBuilder::new(device, texture.format())
+            .sample_type(wgpu::FilterMode::Linear)
+            .build();
+
+        for base_mip_level in 1..texture.mip_level_count() {
+            blitter.copy(
+                device,
+                encoder,
+                &texture.create_view(&wgpu::TextureViewDescriptor {
+                    base_mip_level: base_mip_level - 1,
+                    mip_level_count: Some(1),
+                    ..Default::default()
+                }),
+                &texture.create_view(&wgpu::TextureViewDescriptor {
+                    base_mip_level,
+                    mip_level_count: Some(1),
+                    ..Default::default()
+                }),
+            );
+        }
+    }
+
+    Ok(textures)
 }
 
 fn generate_materials(
@@ -698,7 +703,7 @@ fn create_vertices() -> (Vec<Vec4>, Vec<u16>) {
     (vertex_data.to_vec(), index_data.to_vec())
 }
 
-fn default_blas(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Blas {
+fn default_blas(device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) -> wgpu::Blas {
     let (vertex_data, index_data) = create_vertices();
 
     let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -732,9 +737,6 @@ fn default_blas(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Blas {
         },
     );
 
-    let mut encoder =
-        device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-
     encoder.build_acceleration_structures(
         iter::once(&wgpu::BlasBuildEntry {
             blas: &blas,
@@ -751,8 +753,6 @@ fn default_blas(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Blas {
         }),
         iter::empty(),
     );
-
-    queue.submit(Some(encoder.finish()));
 
     blas
 }
