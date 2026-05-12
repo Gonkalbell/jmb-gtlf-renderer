@@ -482,9 +482,6 @@ fn generate_materials(
         .collect()
 }
 
-#[derive(Hash, Eq, PartialEq, PartialOrd, Ord)]
-struct MeshIndex(usize);
-
 fn generate_tlas(
     device: &wgpu::Device,
     encoder: &mut wgpu::CommandEncoder,

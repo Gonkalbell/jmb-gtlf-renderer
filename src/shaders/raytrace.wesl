@@ -35,7 +35,7 @@ fn vs_skybox(@builtin(vertex_index) vertex_index: u32) -> SkyboxInterp {
 
 @fragment
 fn fs_skybox(vertex: SkyboxInterp) -> @location(0) vec4f {
-    let origin = (res_camera.world_to_local * vec4f(0.0, 0.0, 0.0, 1.0)).xyz;
+    let origin = (res_camera.local_to_world * vec4f(0.0, 0.0, 0.0, 1.0)).xyz;
 
     var rq: ray_query;
     rayQueryInitialize(&rq, acc_struct, RayDesc(0u, 0xFFu, 0.1, 200.0, origin, vertex.ray_dir));
