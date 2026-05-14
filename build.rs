@@ -31,16 +31,16 @@ fn main() -> anyhow::Result<()> {
     )?;
     // add_entry_point_module(&mut bindings_module, &wesl, options, "package::raytracing".parse()?)?;
 
-    let generated_text = format!(r#"
+    let generated_text = format!(
+        r#"
 #![allow(warnings)]
 #![allow(clippy::all)]
 {}
-    "#, bindings_module.to_generated_bindings(options));
+    "#,
+        bindings_module.to_generated_bindings(options)
+    );
 
-    std::fs::write(
-        "src/shaders.rs",
-        generated_text,
-    )?;
+    std::fs::write("src/shaders.rs", generated_text)?;
 
     Ok(())
 }

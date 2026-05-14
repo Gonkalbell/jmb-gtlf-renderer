@@ -104,7 +104,6 @@ impl Skybox {
     }
 }
 
-
 fn create_vertices() -> (Vec<Vec4>, Vec<u16>) {
     let vertex_data = [
         // top (0, 0, 1)
@@ -198,12 +197,9 @@ pub fn default_acc_struct(device: &wgpu::Device, queue: &wgpu::Queue) -> bind_gr
 
     let instance = &mut tlas[0];
 
-    let transform = Mat4::from_translation(Vec3 {
-        x: 0.0,
-        y: 0.0,
-        z: -10.0,
-    });
-    let transform = transform.transpose().to_cols_array()[..12]
+    let transform = Mat4::from_scale(Vec3::splat(0.5))
+        .transpose()
+        .to_cols_array()[..12]
         .try_into()
         .unwrap();
 
@@ -215,18 +211,16 @@ pub fn default_acc_struct(device: &wgpu::Device, queue: &wgpu::Queue) -> bind_gr
     encoder.build_acceleration_structures(
         iter::once(&wgpu::BlasBuildEntry {
             blas: &blas,
-            geometry: wgpu::BlasGeometries::TriangleGeometries(vec![
-                wgpu::BlasTriangleGeometry {
-                    size: &blas_geo_size_desc,
-                    vertex_buffer: &vertex_buf,
-                    first_vertex: 0,
-                    vertex_stride: mem::size_of::<Vec4>() as u64,
-                    index_buffer: Some(&index_buf),
-                    first_index: Some(0),
-                    transform_buffer: None,
-                    transform_buffer_offset: None,
-                },
-            ]),
+            geometry: wgpu::BlasGeometries::TriangleGeometries(vec![wgpu::BlasTriangleGeometry {
+                size: &blas_geo_size_desc,
+                vertex_buffer: &vertex_buf,
+                first_vertex: 0,
+                vertex_stride: mem::size_of::<Vec4>() as u64,
+                index_buffer: Some(&index_buf),
+                first_index: Some(0),
+                transform_buffer: None,
+                transform_buffer_offset: None,
+            }]),
         }),
         iter::once(&tlas),
     );
@@ -235,4 +229,3 @@ pub fn default_acc_struct(device: &wgpu::Device, queue: &wgpu::Queue) -> bind_gr
 
     bind_group
 }
-

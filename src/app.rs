@@ -92,10 +92,9 @@ impl RendererApp {
                     .unwrap()
                     .join("AntiqueCamera/glTF-Binary/AntiqueCamera.glb")
                     .unwrap();
-                let loaded_asset =
-                    asset::load_asset(url, &device, &queue, target_format, loading_progress)
-                        .await
-                        .unwrap();
+                let loaded_asset = asset::load_asset(url, &device, &queue, loading_progress)
+                    .await
+                    .unwrap();
                 if let Ok(mut writer) = asset.write() {
                     *writer = Some(loaded_asset);
                 };
@@ -218,7 +217,7 @@ impl RendererApp {
                                 let egui_wgpu::RenderState {
                                     device,
                                     queue,
-                                    target_format,
+                                    target_format: _,
                                     ..
                                 } = render_state.clone();
                                 let url = Url::parse(ASSETS_BASE_URL)
@@ -227,15 +226,10 @@ impl RendererApp {
                                     .unwrap();
                                 let loading_progress = self.loading_progress.clone();
                                 crate::spawn(async move {
-                                    let loaded_asset = asset::load_asset(
-                                        url,
-                                        &device,
-                                        &queue,
-                                        target_format,
-                                        loading_progress,
-                                    )
-                                    .await
-                                    .unwrap();
+                                    let loaded_asset =
+                                        asset::load_asset(url, &device, &queue, loading_progress)
+                                            .await
+                                            .unwrap();
                                     if let Ok(mut writer) = asset.write() {
                                         *writer = Some(loaded_asset);
                                     };

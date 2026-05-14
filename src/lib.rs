@@ -45,25 +45,3 @@ pub mod bind_groups {
     pub type AccStructure = raytrace::bind_groups::BindGroup2;
     pub type AccStructureLayout<'a> = raytrace::bind_groups::BindGroupLayout2<'a>;
 }
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OwnedBufferSlice {
-    buffer: wgpu::Buffer,
-    offset: wgpu::BufferAddress,
-    size: wgpu::BufferSize,
-}
-
-impl OwnedBufferSlice {
-    fn from_slice(slice: &wgpu::BufferSlice) -> Self {
-        Self {
-            buffer: slice.buffer().clone(),
-            offset: slice.offset(),
-            size: slice.size(),
-        }
-    }
-
-    fn as_slice<'a>(&'a self) -> wgpu::BufferSlice<'a> {
-        self.buffer
-            .slice(self.offset..self.offset + self.size.get())
-    }
-}

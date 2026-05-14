@@ -1,35 +1,19 @@
-use crate::shaders::{self, raytrace};
-
 use super::{
-    DEPTH_FORMAT, OwnedBufferSlice, bind_groups,
-    shaders::scene::{self, Instance, VertexInput},
+    bind_groups,
+    shaders::scene::{self},
 };
 
+use std::iter;
 use std::{
     borrow::Cow,
-    collections::HashMap,
     fmt::Write,
-    ops::Range,
     sync::{Arc, Mutex},
 };
-use std::{iter, mem};
 
-use glam::{Mat3, Mat4, Quat, Vec3, Vec4};
+use glam::{Mat4, Quat, Vec3};
 use image::DynamicImage;
 use reqwest::Url;
 use wgpu::util::DeviceExt;
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct OwnedVertexBufferLayout {
-    array_stride: wgpu::BufferAddress,
-    attribute: wgpu::VertexAttribute,
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct PipelineCacheKey {
-    attributes: Vec<OwnedVertexBufferLayout>,
-    primitive_state: wgpu::PrimitiveState,
-}
 
 #[derive(Clone, Debug)]
 pub struct Asset {
@@ -46,7 +30,6 @@ pub async fn load_asset(
     url: Url,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    color_format: wgpu::TextureFormat,
     loading_progress: Arc<Mutex<LoadingProgress>>,
 ) -> anyhow::Result<Asset> {
     if let Ok(mut loading_progress) = loading_progress.lock() {
@@ -75,32 +58,21 @@ pub async fn load_asset(
         buffer_contents[0] = blob
     }
 
-    let buffers: Vec<_> = doc
-        .buffers()
-        .zip(buffer_contents.iter())
-        .map(|(doc_buffer, contents)| {
+    let mut buffers: Vec<_> = doc
+        .views()
+        .map(|doc_view: gltf::buffer::View| {
+            let start = doc_view.offset();
+            let end = doc_view.offset() + doc_view.length();
+            let contents = &buffer_contents[doc_view.buffer().index()][start..end];
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: doc_buffer.name(),
+                label: doc_view.name(),
                 contents,
-                usage: wgpu::BufferUsages::COPY_DST
-                    | wgpu::BufferUsages::VERTEX
-                    | wgpu::BufferUsages::INDEX
-                    | wgpu::BufferUsages::BLAS_INPUT,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::BLAS_INPUT,
             })
         })
         .collect();
 
-    let mut buffer_slices: Vec<_> = doc
-        .views()
-        .map(|doc_view: gltf::buffer::View| {
-            OwnedBufferSlice::from_slice(&buffers[doc_view.buffer().index()].slice(
-                doc_view.offset() as wgpu::BufferAddress
-                    ..(doc_view.offset() + doc_view.length()) as wgpu::BufferAddress,
-            ))
-        })
-        .collect();
-
-    fixup_u8_index_buffers(&doc, &buffer_contents, &buffers, &mut buffer_slices, device);
+    fixup_u8_index_buffers(&doc, &buffer_contents, &mut buffers, device);
 
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("build acceleration structures"),
@@ -217,7 +189,7 @@ pub async fn load_asset(
 
     let _ = (default_material_bgroup, materials);
 
-    let blases = generate_meshes(device, &mut encoder, &doc, &buffer_slices);
+    let blases = generate_meshes(device, &mut encoder, &doc, &buffers);
 
     let tlas = generate_tlas(device, &mut encoder, &doc, &blases);
 
@@ -256,8 +228,7 @@ pub async fn load_asset(
 fn fixup_u8_index_buffers(
     doc: &gltf::Document,
     buffer_contents: &[Vec<u8>],
-    buffers: &[wgpu::Buffer],
-    buffer_slices: &mut [OwnedBufferSlice],
+    buffers: &mut [wgpu::Buffer],
     device: &wgpu::Device,
 ) {
     for accessor in doc.accessors() {
@@ -265,21 +236,19 @@ fn fixup_u8_index_buffers(
         if let Some(view) = accessor.view()
             && let Some(Target::ElementArrayBuffer) = view.target()
             && accessor.data_type() == DataType::U8
-            && buffer_slices[view.index()].buffer == buffers[view.buffer().index()]
         {
             let start = view.offset();
             let end = start + view.length();
             let u8_contents = &buffer_contents[view.buffer().index()][start..end];
             let u16_contents: Vec<u16> = u8_contents.iter().map(|&b| b as u16).collect();
 
-            let u16_index_buffers = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            let u16_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: accessor.name(),
                 contents: bytemuck::cast_slice(&u16_contents),
-                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::INDEX,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::BLAS_INPUT,
             });
 
-            buffer_slices[view.index()] =
-                OwnedBufferSlice::from_slice(&u16_index_buffers.slice(..));
+            buffers[view.index()] = u16_index_buffer;
         }
     }
 }
@@ -541,7 +510,7 @@ fn generate_tlas(
         })
         .collect();
 
-    let doc_scene = doc.default_scene().or_else(|| doc.scenes().nth(0)).unwrap();
+    let doc_scene = doc.default_scene().or_else(|| doc.scenes().next()).unwrap();
     let mut tlas = device.create_tlas(&wgpu::CreateTlasDescriptor {
         label: doc_scene.name(),
         max_instances: tlas_instances.len() as _,
@@ -567,7 +536,7 @@ fn generate_meshes(
     device: &wgpu::Device,
     encoder: &mut wgpu::CommandEncoder,
     doc: &gltf::Document,
-    buffer_slices: &[OwnedBufferSlice],
+    buffers: &[wgpu::Buffer],
 ) -> Vec<wgpu::Blas> {
     use gltf::mesh::Semantic;
 
@@ -584,27 +553,27 @@ fn generate_meshes(
             let view = doc_positions.view().unwrap();
             let format = get_vertex_format(&doc_positions);
             let vertex_stride = view.stride().map(|s| s as _).unwrap_or(format.size());
-            let buf_slice = &buffer_slices[view.index()];
+            let vertex_buffer = &buffers[view.index()];
+            let first_vertex = (doc_positions.offset() as u64 / format.size()) as _;
 
             let (index_format, index_count, index_buffer, first_index) =
                 if let Some(doc_indices) = doc_primitive.indices() {
                     use gltf::accessor::DataType;
                     let index_format = match doc_indices.data_type() {
+                        DataType::U8 => wgpu::IndexFormat::Uint16,
                         DataType::U16 => wgpu::IndexFormat::Uint16,
                         DataType::U32 => wgpu::IndexFormat::Uint32,
                         t => unimplemented!("Index type {:?} is not supported", t),
                     };
                     let index_count = doc_indices.count() as u32;
-                    let slice = &buffer_slices[doc_indices.view().unwrap().index()];
-                    let index_buffer = &slice.buffer;
-                    let first_index = ((slice.offset as usize + doc_indices.offset())
-                        / index_format.byte_size()) as u32;
+                    let index_buffer = &buffers[doc_indices.view().unwrap().index()];
+                    let first_index = doc_indices.offset() / index_format.byte_size();
 
                     (
                         Some(index_format),
                         Some(index_count),
                         Some(index_buffer),
-                        Some(first_index),
+                        Some(first_index as u32),
                     )
                 } else {
                     (None, None, None, None)
@@ -620,9 +589,8 @@ fn generate_meshes(
 
             geometry_build_fns.push(move |size| wgpu::BlasTriangleGeometry {
                 size,
-                vertex_buffer: &buf_slice.buffer,
-                first_vertex: ((buf_slice.offset + doc_positions.offset() as u64) / format.size())
-                    as u32,
+                vertex_buffer,
+                first_vertex,
                 vertex_stride,
                 index_buffer,
                 first_index,
@@ -649,6 +617,9 @@ fn generate_meshes(
                 .map(|(f, s)| f(s))
                 .collect(),
         );
+        // match &geometry {
+        //     wgpu::BlasGeometries::TriangleGeometries(items) => dbg!(&items),
+        // };
         encoder.build_acceleration_structures(
             iter::once(&wgpu::BlasBuildEntry { blas, geometry }),
             [],
@@ -691,104 +662,4 @@ fn get_vertex_format(accessor: &gltf::Accessor) -> wgpu::VertexFormat {
         (_, DataType::F32, Dimensions::Vec4) => wgpu::VertexFormat::Float32x4,
         _ => unimplemented!(),
     }
-}
-
-fn create_vertices() -> (Vec<Vec4>, Vec<u16>) {
-    let vertex_data = [
-        // top (0, 0, 1)
-        Vec4::new(-1., -1., 1., 1.),
-        Vec4::new(1., -1., 1., 1.),
-        Vec4::new(1., 1., 1., 1.),
-        Vec4::new(-1., 1., 1., 1.),
-        // bottom (0, 0, -1)
-        Vec4::new(-1., 1., -1., 1.),
-        Vec4::new(1., 1., -1., 1.),
-        Vec4::new(1., -1., -1., 1.),
-        Vec4::new(-1., -1., -1., 1.),
-        // right (1., 0, 0)
-        Vec4::new(1., -1., -1., 1.),
-        Vec4::new(1., 1., -1., 1.),
-        Vec4::new(1., 1., 1., 1.),
-        Vec4::new(1., -1., 1., 1.),
-        // left (-1., 0, 0)
-        Vec4::new(-1., -1., 1., 1.),
-        Vec4::new(-1., 1., 1., 1.),
-        Vec4::new(-1., 1., -1., 1.),
-        Vec4::new(-1., -1., -1., 1.),
-        // front (0, 1., 0)
-        Vec4::new(1., 1., -1., 1.),
-        Vec4::new(-1., 1., -1., 1.),
-        Vec4::new(-1., 1., 1., 1.),
-        Vec4::new(1., 1., 1., 1.),
-        // back (0, -1., 0)
-        Vec4::new(1., -1., 1., 1.),
-        Vec4::new(-1., -1., 1., 1.),
-        Vec4::new(-1., -1., -1., 1.),
-        Vec4::new(1., -1., -1., 1.),
-    ];
-
-    let index_data: &[u16] = &[
-        0, 1, 2, 2, 3, 0, // top
-        4, 5, 6, 6, 7, 4, // bottom
-        8, 9, 10, 10, 11, 8, // right
-        12, 13, 14, 14, 15, 12, // left
-        16, 17, 18, 18, 19, 16, // front
-        20, 21, 22, 22, 23, 20, // back
-    ];
-
-    (vertex_data.to_vec(), index_data.to_vec())
-}
-
-fn default_blas(device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) -> wgpu::Blas {
-    let (vertex_data, index_data) = create_vertices();
-
-    let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Vertex Buffer"),
-        contents: bytemuck::cast_slice(&vertex_data),
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::BLAS_INPUT,
-    });
-
-    let index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Index Buffer"),
-        contents: bytemuck::cast_slice(&index_data),
-        usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::BLAS_INPUT,
-    });
-
-    let blas_geo_size_desc = wgpu::BlasTriangleGeometrySizeDescriptor {
-        vertex_format: wgpu::VertexFormat::Float32x3,
-        vertex_count: vertex_data.len() as u32,
-        index_format: Some(wgpu::IndexFormat::Uint16),
-        index_count: Some(index_data.len() as u32),
-        flags: wgpu::AccelerationStructureGeometryFlags::OPAQUE,
-    };
-
-    let blas = device.create_blas(
-        &wgpu::CreateBlasDescriptor {
-            label: None,
-            flags: wgpu::AccelerationStructureFlags::PREFER_FAST_TRACE,
-            update_mode: wgpu::AccelerationStructureUpdateMode::Build,
-        },
-        wgpu::BlasGeometrySizeDescriptors::Triangles {
-            descriptors: vec![blas_geo_size_desc.clone()],
-        },
-    );
-
-    encoder.build_acceleration_structures(
-        iter::once(&wgpu::BlasBuildEntry {
-            blas: &blas,
-            geometry: wgpu::BlasGeometries::TriangleGeometries(vec![wgpu::BlasTriangleGeometry {
-                size: &blas_geo_size_desc,
-                vertex_buffer: &vertex_buf,
-                first_vertex: 0,
-                vertex_stride: mem::size_of::<Vec4>() as u64,
-                index_buffer: Some(&index_buf),
-                first_index: Some(0),
-                transform_buffer: None,
-                transform_buffer_offset: None,
-            }]),
-        }),
-        iter::empty(),
-    );
-
-    blas
 }
