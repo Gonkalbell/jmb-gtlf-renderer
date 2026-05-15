@@ -25,7 +25,6 @@ async fn main() -> eframe::Result {
                     device_descriptor: Arc::new(|_| wgpu::DeviceDescriptor {
                         experimental_features: unsafe { wgpu::ExperimentalFeatures::enabled() },
                         required_features: wgpu::Features::EXPERIMENTAL_RAY_QUERY
-                            | wgpu::Features::EXPERIMENTAL_RAY_HIT_VERTEX_RETURN
                             | wgpu::Features::BUFFER_BINDING_ARRAY
                             | wgpu::Features::TEXTURE_BINDING_ARRAY
                             | wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY,

@@ -23,13 +23,6 @@ fn main() -> anyhow::Result<()> {
         options,
         "package::raytrace".parse()?,
     )?;
-    add_entry_point_module(
-        &mut bindings_module,
-        &wesl,
-        options,
-        "package::scene".parse()?,
-    )?;
-    // add_entry_point_module(&mut bindings_module, &wesl, options, "package::raytracing".parse()?)?;
 
     let generated_text = format!(
         r#"

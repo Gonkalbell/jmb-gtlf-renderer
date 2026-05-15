@@ -33,12 +33,6 @@ pub mod bind_groups {
     pub type Camera = raytrace::bind_groups::BindGroup0;
     pub type CameraLayout<'a> = raytrace::bind_groups::BindGroupLayout0<'a>;
 
-    pub type Material = scene::bind_groups::BindGroup1;
-    pub type MaterialLayout<'a> = scene::bind_groups::BindGroupLayout1<'a>;
-
-    pub type Instance = scene::bind_groups::BindGroup2;
-    pub type InstanceLayout<'a> = scene::bind_groups::BindGroupLayout2<'a>;
-
     pub type Skybox = raytrace::bind_groups::BindGroup1;
     pub type SkyboxLayout<'a> = raytrace::bind_groups::BindGroupLayout1<'a>;
 

@@ -1,7 +1,4 @@
-use super::{
-    bind_groups,
-    shaders::scene::{self},
-};
+use super::bind_groups;
 
 use std::iter;
 use std::{
@@ -156,38 +153,6 @@ pub async fn load_asset(
         &[0xFF, 0xFF, 0xFF, 0xFF],
     );
     let default_sampler = device.create_sampler(&Default::default());
-
-    let defualt_material_data = scene::Material {
-        base_color_factor: glam::Vec4::ONE,
-        alpha_cutoff: 0.5,
-        _padding0: Default::default(),
-        _padding1: Default::default(),
-        _padding2: Default::default(),
-    };
-    let default_material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Material Data"),
-        contents: bytemuck::bytes_of(&defualt_material_data),
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
-    });
-    let default_material_bgroup = bind_groups::Material::from_bindings(
-        device,
-        bind_groups::MaterialLayout {
-            material_data: default_material_buffer.as_entire_buffer_binding(),
-            base_color_texture: &default_texture.create_view(&Default::default()),
-            base_color_sampler: &default_sampler,
-        },
-    );
-
-    let materials = generate_materials(
-        device,
-        &doc,
-        &textures,
-        &samplers,
-        &default_texture,
-        &default_sampler,
-    );
-
-    let _ = (default_material_bgroup, materials);
 
     let blases = generate_meshes(device, &mut encoder, &doc, &buffers);
 
@@ -401,55 +366,55 @@ async fn generate_textures(
     Ok(textures)
 }
 
-fn generate_materials(
-    device: &wgpu::Device,
-    doc: &gltf::Document,
-    textures: &[wgpu::Texture],
-    samplers: &[wgpu::Sampler],
-    default_texture: &wgpu::Texture,
-    default_sampler: &wgpu::Sampler,
-) -> Vec<bind_groups::Material> {
-    doc.materials()
-        .map(|doc_material| {
-            let material_data = scene::Material {
-                base_color_factor: glam::Vec4::from(
-                    doc_material.pbr_metallic_roughness().base_color_factor(),
-                ),
-                alpha_cutoff: doc_material.alpha_cutoff().unwrap_or(0.),
-                _padding0: Default::default(),
-                _padding1: Default::default(),
-                _padding2: Default::default(),
-            };
-            let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Material Data"),
-                contents: bytemuck::bytes_of(&material_data),
-                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
-            });
+// fn generate_materials(
+//     device: &wgpu::Device,
+//     doc: &gltf::Document,
+//     textures: &[wgpu::Texture],
+//     samplers: &[wgpu::Sampler],
+//     default_texture: &wgpu::Texture,
+//     default_sampler: &wgpu::Sampler,
+// ) -> Vec<bind_groups::Material> {
+//     doc.materials()
+//         .map(|doc_material| {
+//             let material_data = scene::Material {
+//                 base_color_factor: glam::Vec4::from(
+//                     doc_material.pbr_metallic_roughness().base_color_factor(),
+//                 ),
+//                 alpha_cutoff: doc_material.alpha_cutoff().unwrap_or(0.),
+//                 _padding0: Default::default(),
+//                 _padding1: Default::default(),
+//                 _padding2: Default::default(),
+//             };
+//             let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+//                 label: Some("Material Data"),
+//                 contents: bytemuck::bytes_of(&material_data),
+//                 usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
+//             });
 
-            let doc_texture = doc_material
-                .pbr_metallic_roughness()
-                .base_color_texture()
-                .map(|t| t.texture());
-            let base_color_texture = &doc_texture
-                .as_ref()
-                .map(|t| &textures[t.source().index()])
-                .unwrap_or(default_texture)
-                .create_view(&Default::default());
-            let base_color_sampler = doc_texture
-                .and_then(|t| t.sampler().index())
-                .map(|index| &samplers[index])
-                .unwrap_or(default_sampler);
-            bind_groups::Material::from_bindings(
-                device,
-                bind_groups::MaterialLayout {
-                    material_data: material_buffer.as_entire_buffer_binding(),
-                    base_color_texture,
-                    base_color_sampler,
-                },
-            )
-        })
-        .collect()
-}
+//             let doc_texture = doc_material
+//                 .pbr_metallic_roughness()
+//                 .base_color_texture()
+//                 .map(|t| t.texture());
+//             let base_color_texture = &doc_texture
+//                 .as_ref()
+//                 .map(|t| &textures[t.source().index()])
+//                 .unwrap_or(default_texture)
+//                 .create_view(&Default::default());
+//             let base_color_sampler = doc_texture
+//                 .and_then(|t| t.sampler().index())
+//                 .map(|index| &samplers[index])
+//                 .unwrap_or(default_sampler);
+//             bind_groups::Material::from_bindings(
+//                 device,
+//                 bind_groups::MaterialLayout {
+//                     material_data: material_buffer.as_entire_buffer_binding(),
+//                     base_color_texture,
+//                     base_color_sampler,
+//                 },
+//             )
+//         })
+//         .collect()
+// }
 
 fn generate_tlas(
     device: &wgpu::Device,
@@ -505,7 +470,7 @@ fn generate_tlas(
                 let transform = transform.transpose().to_cols_array()[..12]
                     .try_into()
                     .unwrap();
-                wgpu::TlasInstance::new(blas, transform, 0, 0xFF)
+                wgpu::TlasInstance::new(blas, transform, doc_mesh.index() as _, 0xFF)
             })
         })
         .collect();
@@ -514,7 +479,7 @@ fn generate_tlas(
     let mut tlas = device.create_tlas(&wgpu::CreateTlasDescriptor {
         label: doc_scene.name(),
         max_instances: tlas_instances.len() as _,
-        flags: wgpu::AccelerationStructureFlags::empty(),
+        flags: wgpu::AccelerationStructureFlags::PREFER_FAST_BUILD,
         update_mode: wgpu::AccelerationStructureUpdateMode::Build,
     });
 
@@ -602,7 +567,7 @@ fn generate_meshes(
         let blas = blases.push_mut(device.create_blas(
             &wgpu::CreateBlasDescriptor {
                 label: doc_mesh.name(),
-                flags: wgpu::AccelerationStructureFlags::empty(),
+                flags: wgpu::AccelerationStructureFlags::PREFER_FAST_BUILD,
                 update_mode: wgpu::AccelerationStructureUpdateMode::Build,
             },
             wgpu::BlasGeometrySizeDescriptors::Triangles {
