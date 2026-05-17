@@ -296,16 +296,16 @@ pub mod raytrace {
         bind_group1.set(pass);
         bind_group2.set(pass);
     }
-    pub fn fs_skybox_entry(
+    pub fn fs_raytrace_entry(
         targets: [Option<wgpu::ColorTargetState>; 1],
     ) -> super::FragmentEntry<1> {
         super::FragmentEntry {
-            entry_point: ENTRY_FS_SKYBOX,
+            entry_point: ENTRY_FS_RAYTRACE,
             targets,
             constants: Default::default(),
         }
     }
-    pub const SOURCE : & str = "enable wgpu_ray_query;\n\n@group(1) @binding(0)\nvar res_texture: texture_cube<f32>;\n\n@group(1) @binding(1)\nvar res_sampler: sampler;\n\n@group(2) @binding(0)\nvar acc_struct: acceleration_structure;\n\nstruct SkyboxInterp {\n    @builtin(position)\n    position: vec4f,\n    @location(0)\n    ray_dir: vec3<f32>\n}\n\n@vertex\nfn vs_skybox(@builtin(vertex_index) vertex_index: u32) -> SkyboxInterp {\n    let x = i32(vertex_index) / 2;\n    let y = i32(vertex_index) & 1;\n    let tc = vec2<f32>(f32(x) * 2.0, f32(y) * 2.0);\n    let pos = vec4f(1.0 - 2.0 * tc, 0.0, 1.0);\n    var result: SkyboxInterp;\n    result.position = pos;\n    let dir = vec4f((package__1bgroup_camera__1res_camera.proj_to_local * pos).xyz, 0.0);\n    result.ray_dir = (package__1bgroup_camera__1res_camera.local_to_world * dir).xyz;\n    return result;\n}\n\nfn u32x3_to_color(p: vec3<u32>) -> vec3f {\n    let r = reverseBits(p.x);\n    let g = reverseBits(p.y);\n    let b = reverseBits(p.z);\n    return vec3f(f32(r), f32(g), f32(b)) * (1.0 / f32(4294967295u));\n}\n\n@fragment\nfn fs_skybox(vertex: SkyboxInterp) -> @location(0) vec4f {\n    let origin = (package__1bgroup_camera__1res_camera.local_to_world * vec4f(0.0, 0.0, 0.0, 1.0)).xyz;\n    var rq: ray_query;\n    rayQueryInitialize(&rq, acc_struct, RayDesc(0u, 255u, 0.01, 200.0, origin, vertex.ray_dir));\n    rayQueryProceed(&rq);\n    let intersection = rayQueryGetCommittedIntersection(&rq);\n    var result = vec4f(0.0);\n    if intersection.kind == RAY_QUERY_INTERSECTION_NONE {\n        result = textureSample(res_texture, res_sampler, vertex.ray_dir);\n    }\n    else {\n        let w = 1.0 - intersection.barycentrics.x - intersection.barycentrics.y;\n        let centrality = min(min(intersection.barycentrics.x, intersection.barycentrics.y), w) * 3.0;\n        let input = vec3<u32>(intersection.geometry_index, intersection.primitive_index, intersection.instance_custom_data);\n        let color = u32x3_to_color(input);\n        result = select(0.0, 1.0, centrality > 0.1) * vec4f(color, 1.0);\n    }\n    return result;\n}\n\nstruct package__1bgroup_camera_Camera {\n    world_to_local: mat4x4<f32>,\n    local_to_world: mat4x4<f32>,\n    local_to_proj: mat4x4<f32>,\n    proj_to_local: mat4x4<f32>,\n    world_to_proj: mat4x4<f32>,\n    proj_to_world: mat4x4<f32>\n}\n\n@group(0) @binding(0)\nvar<uniform> package__1bgroup_camera__1res_camera: package__1bgroup_camera_Camera;\n" ;
+    pub const SOURCE : & str = "enable wgpu_ray_query;\n\n@group(1) @binding(0)\nvar res_texture: texture_cube<f32>;\n\n@group(1) @binding(1)\nvar res_sampler: sampler;\n\n@group(2) @binding(0)\nvar acc_struct: acceleration_structure;\n\nstruct SkyboxInterp {\n    @builtin(position)\n    position: vec4f,\n    @location(0)\n    ray_dir: vec3<f32>\n}\n\n@vertex\nfn vs_raytrace(@builtin(vertex_index) vertex_index: u32) -> SkyboxInterp {\n    let x = i32(vertex_index) / 2;\n    let y = i32(vertex_index) & 1;\n    let tc = vec2<f32>(f32(x) * 2.0, f32(y) * 2.0);\n    let pos = vec4f(1.0 - 2.0 * tc, 0.0, 1.0);\n    var result: SkyboxInterp;\n    result.position = pos;\n    let dir = vec4f((package__1bgroup_camera__1res_camera.proj_to_local * pos).xyz, 0.0);\n    result.ray_dir = (package__1bgroup_camera__1res_camera.local_to_world * dir).xyz;\n    return result;\n}\n\nconst TAU: f32 = 6.28318530718;\n\nconst PHI: f32 = 1.61803398875;\n\nfn u32_to_color(n: u32) -> vec3f {\n    let fi = f32(n);\n    let theta = TAU * fract(fi / PHI);\n    let phi = acos(1.0 - 2.0 * fract(fi * 0.618033988749));\n    let sp = sin(phi);\n    let xyz = vec3f(sp * cos(theta), sp * sin(theta), cos(phi));\n    return xyz * 0.5 + 0.5;\n}\n\n@fragment\nfn fs_raytrace(vertex: SkyboxInterp) -> @location(0) vec4f {\n    let origin = (package__1bgroup_camera__1res_camera.local_to_world * vec4f(0.0, 0.0, 0.0, 1.0)).xyz;\n    var rq: ray_query;\n    rayQueryInitialize(&rq, acc_struct, RayDesc(0u, 255u, 0.01, 200.0, origin, vertex.ray_dir));\n    rayQueryProceed(&rq);\n    let intersection = rayQueryGetCommittedIntersection(&rq);\n    var result = vec4f(0.0);\n    if intersection.kind == RAY_QUERY_INTERSECTION_NONE {\n        result = textureSample(res_texture, res_sampler, vertex.ray_dir);\n    }\n    else {\n        let w = 1.0 - intersection.barycentrics.x - intersection.barycentrics.y;\n        let centrality = min(min(intersection.barycentrics.x, intersection.barycentrics.y), w) * 3.0;\n        let color = u32_to_color(intersection.instance_custom_data);\n        result = select(0.0, 1.0, centrality > 0.1) * vec4f(color, 1.0);\n    }\n    return result;\n}\n\nstruct package__1bgroup_camera_Camera {\n    world_to_local: mat4x4<f32>,\n    local_to_world: mat4x4<f32>,\n    local_to_proj: mat4x4<f32>,\n    proj_to_local: mat4x4<f32>,\n    world_to_proj: mat4x4<f32>,\n    proj_to_world: mat4x4<f32>\n}\n\n@group(0) @binding(0)\nvar<uniform> package__1bgroup_camera__1res_camera: package__1bgroup_camera_Camera;\n" ;
     pub fn create_shader_module(device: &wgpu::Device) -> wgpu::ShaderModule {
         let source = std::borrow::Cow::Borrowed(SOURCE);
         device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -324,11 +324,13 @@ pub mod raytrace {
             immediate_size: 0,
         })
     }
-    pub const ENTRY_FS_SKYBOX: &str = "fs_skybox";
-    pub const ENTRY_VS_SKYBOX: &str = "vs_skybox";
-    pub fn vs_skybox_entry() -> super::VertexEntry<0> {
+    pub const ENTRY_FS_RAYTRACE: &str = "fs_raytrace";
+    pub const ENTRY_VS_RAYTRACE: &str = "vs_raytrace";
+    pub const PHI: f32 = 1.618034f32;
+    pub const TAU: f32 = 6.2831855f32;
+    pub fn vs_raytrace_entry() -> super::VertexEntry<0> {
         super::VertexEntry {
-            entry_point: ENTRY_VS_SKYBOX,
+            entry_point: ENTRY_VS_RAYTRACE,
             buffers: [],
             constants: Default::default(),
         }

@@ -154,9 +154,9 @@ pub async fn load_asset(
     );
     let default_sampler = device.create_sampler(&Default::default());
 
-    let blases = generate_meshes(device, &mut encoder, &doc, &buffers);
+    let mesh_blases = generate_meshes(device, &mut encoder, &doc, &buffers);
 
-    let tlas = generate_tlas(device, &mut encoder, &doc, &blases);
+    let tlas = generate_tlas(device, &mut encoder, &doc, &mesh_blases);
 
     let tlas_bgroup = bind_groups::AccStructure::from_bindings(
         device,
@@ -420,7 +420,7 @@ fn generate_tlas(
     device: &wgpu::Device,
     encoder: &mut wgpu::CommandEncoder,
     doc: &gltf::Document,
-    blases: &[wgpu::Blas],
+    mesh_blases: &[MeshBlases],
 ) -> wgpu::Tlas {
     // Get world transforms
     let mut nodes_to_visit = Vec::new();
@@ -461,19 +461,27 @@ fn generate_tlas(
         *transform = inv_bounding_box_matrix * *transform;
     }
 
-    let tlas_instances: Vec<_> = doc
-        .nodes()
+    let mut tlas_instances: Vec<_> = Vec::new();
+    doc.nodes()
         .zip(world_transforms.iter())
-        .filter_map(|(doc_node, &transform)| {
-            doc_node.mesh().map(|doc_mesh| {
-                let blas = &blases[doc_mesh.index()];
+        .for_each(|(doc_node, &transform)| {
+            doc_node.mesh().iter().for_each(|doc_mesh| {
+                let primitive_blases = &mesh_blases[doc_mesh.index()].primitives;
                 let transform = transform.transpose().to_cols_array()[..12]
                     .try_into()
                     .unwrap();
-                wgpu::TlasInstance::new(blas, transform, doc_mesh.index() as _, 0xFF)
+                tlas_instances.extend(doc_mesh.primitives().zip(primitive_blases.iter()).map({
+                    |(doc_primitive, prim_blas)| {
+                        wgpu::TlasInstance::new(
+                            prim_blas,
+                            transform,
+                            doc_primitive.material().index().map_or(0, |i| i as u32 + 1),
+                            0xFF,
+                        )
+                    }
+                }));
             })
-        })
-        .collect();
+        });
 
     let doc_scene = doc.default_scene().or_else(|| doc.scenes().next()).unwrap();
     let mut tlas = device.create_tlas(&wgpu::CreateTlasDescriptor {
@@ -497,101 +505,105 @@ fn generate_tlas(
     tlas
 }
 
+struct MeshBlases {
+    primitives: Vec<wgpu::Blas>,
+}
+
 fn generate_meshes(
     device: &wgpu::Device,
     encoder: &mut wgpu::CommandEncoder,
     doc: &gltf::Document,
     buffers: &[wgpu::Buffer],
-) -> Vec<wgpu::Blas> {
+) -> Vec<MeshBlases> {
     use gltf::mesh::Semantic;
 
-    let mut blases = Vec::new();
-    for doc_mesh in doc.meshes() {
-        let mut descriptors = Vec::new();
-        let mut geometry_build_fns = Vec::new();
-        for doc_primitive in doc_mesh.primitives() {
-            let (_, doc_positions) = doc_primitive
-                .attributes()
-                .find(|(s, _)| *s == Semantic::Positions)
-                .unwrap();
+    doc.meshes()
+        .map(|doc_mesh| {
+            let primitives: Vec<_> = doc_mesh
+                .primitives()
+                .map(|doc_primitive| {
+                    let (_, doc_positions) = doc_primitive
+                        .attributes()
+                        .find(|(s, _)| *s == Semantic::Positions)
+                        .unwrap();
 
-            let view = doc_positions.view().unwrap();
-            let format = get_vertex_format(&doc_positions);
-            let vertex_stride = view.stride().map(|s| s as _).unwrap_or(format.size());
-            let vertex_buffer = &buffers[view.index()];
-            let first_vertex = (doc_positions.offset() as u64 / format.size()) as _;
+                    let view = doc_positions.view().unwrap();
+                    let format = get_vertex_format(&doc_positions);
+                    let vertex_stride = view.stride().map(|s| s as _).unwrap_or(format.size());
+                    let vertex_buffer = &buffers[view.index()];
+                    let first_vertex = (doc_positions.offset() as u64 / format.size()) as _;
 
-            let (index_format, index_count, index_buffer, first_index) =
-                if let Some(doc_indices) = doc_primitive.indices() {
-                    use gltf::accessor::DataType;
-                    let index_format = match doc_indices.data_type() {
-                        DataType::U8 => wgpu::IndexFormat::Uint16,
-                        DataType::U16 => wgpu::IndexFormat::Uint16,
-                        DataType::U32 => wgpu::IndexFormat::Uint32,
-                        t => unimplemented!("Index type {:?} is not supported", t),
-                    };
-                    let index_count = doc_indices.count() as u32;
-                    let index_buffer = &buffers[doc_indices.view().unwrap().index()];
-                    let first_index = doc_indices.offset() / index_format.byte_size();
+                    let (index_format, index_count, index_buffer, first_index) =
+                        if let Some(doc_indices) = doc_primitive.indices() {
+                            use gltf::accessor::DataType;
+                            let index_format = match doc_indices.data_type() {
+                                DataType::U8 => wgpu::IndexFormat::Uint16,
+                                DataType::U16 => wgpu::IndexFormat::Uint16,
+                                DataType::U32 => wgpu::IndexFormat::Uint32,
+                                t => unimplemented!("Index type {:?} is not supported", t),
+                            };
+                            let index_count = doc_indices.count() as u32;
+                            let index_buffer = &buffers[doc_indices.view().unwrap().index()];
+                            let first_index = doc_indices.offset() / index_format.byte_size();
 
-                    (
-                        Some(index_format),
-                        Some(index_count),
-                        Some(index_buffer),
-                        Some(first_index as u32),
-                    )
-                } else {
-                    (None, None, None, None)
-                };
+                            (
+                                Some(index_format),
+                                Some(index_count),
+                                Some(index_buffer),
+                                Some(first_index as u32),
+                            )
+                        } else {
+                            (None, None, None, None)
+                        };
 
-            descriptors.push(wgpu::BlasTriangleGeometrySizeDescriptor {
-                vertex_format: format,
-                vertex_count: doc_positions.count() as _,
-                index_format,
-                index_count,
-                flags: wgpu::AccelerationStructureGeometryFlags::OPAQUE,
-            });
+                    let size: wgpu::wgt::BlasTriangleGeometrySizeDescriptor =
+                        wgpu::BlasTriangleGeometrySizeDescriptor {
+                            vertex_format: format,
+                            vertex_count: doc_positions.count() as _,
+                            index_format,
+                            index_count,
+                            flags: wgpu::AccelerationStructureGeometryFlags::OPAQUE,
+                        };
 
-            geometry_build_fns.push(move |size| wgpu::BlasTriangleGeometry {
-                size,
-                vertex_buffer,
-                first_vertex,
-                vertex_stride,
-                index_buffer,
-                first_index,
-                transform_buffer: None,
-                transform_buffer_offset: None,
-            });
-        }
+                    let blas = device.create_blas(
+                        &wgpu::CreateBlasDescriptor {
+                            label: doc_mesh.name(),
+                            flags: wgpu::AccelerationStructureFlags::PREFER_FAST_BUILD,
+                            update_mode: wgpu::AccelerationStructureUpdateMode::Build,
+                        },
+                        wgpu::BlasGeometrySizeDescriptors::Triangles {
+                            descriptors: vec![size.clone()],
+                        },
+                    );
 
-        let blas = blases.push_mut(device.create_blas(
-            &wgpu::CreateBlasDescriptor {
-                label: doc_mesh.name(),
-                flags: wgpu::AccelerationStructureFlags::PREFER_FAST_BUILD,
-                update_mode: wgpu::AccelerationStructureUpdateMode::Build,
-            },
-            wgpu::BlasGeometrySizeDescriptors::Triangles {
-                descriptors: descriptors.clone(),
-            },
-        ));
+                    let geometry = wgpu::BlasGeometries::TriangleGeometries(vec![
+                        wgpu::BlasTriangleGeometry {
+                            size: &size,
+                            vertex_buffer,
+                            first_vertex,
+                            vertex_stride,
+                            index_buffer,
+                            first_index,
+                            transform_buffer: None,
+                            transform_buffer_offset: None,
+                        },
+                    ]);
 
-        let geometry = wgpu::BlasGeometries::TriangleGeometries(
-            geometry_build_fns
-                .iter()
-                .zip(descriptors.iter())
-                .map(|(f, s)| f(s))
-                .collect(),
-        );
-        // match &geometry {
-        //     wgpu::BlasGeometries::TriangleGeometries(items) => dbg!(&items),
-        // };
-        encoder.build_acceleration_structures(
-            iter::once(&wgpu::BlasBuildEntry { blas, geometry }),
-            [],
-        );
-    }
+                    encoder.build_acceleration_structures(
+                        iter::once(&wgpu::BlasBuildEntry {
+                            blas: &blas,
+                            geometry,
+                        }),
+                        [],
+                    );
 
-    blases
+                    blas
+                })
+                .collect();
+
+            MeshBlases { primitives }
+        })
+        .collect()
 }
 
 fn get_vertex_format(accessor: &gltf::Accessor) -> wgpu::VertexFormat {

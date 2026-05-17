@@ -13,7 +13,7 @@ struct SkyboxInterp {
 };
 
 @vertex
-fn vs_skybox(@builtin(vertex_index) vertex_index: u32) -> SkyboxInterp {
+fn vs_raytrace(@builtin(vertex_index) vertex_index: u32) -> SkyboxInterp {
     // hacky way to draw a large triangle
     let x = i32(vertex_index) / 2;
     let y = i32(vertex_index) & 1;
@@ -59,15 +59,8 @@ fn u32_to_color(n: u32) -> vec3f {
     return xyz * 0.5 + 0.5;
 }
 
-fn u32x3_to_color(p: vec3<u32>) -> vec3f {
-    let r = reverseBits(p.x);
-    let g = reverseBits(p.y);
-    let b = reverseBits(p.z);
-    return vec3f(f32(r), f32(g), f32(b)) * (1.0 / f32(0xffffffffu));
-}
-
 @fragment
-fn fs_skybox(vertex: SkyboxInterp) -> @location(0) vec4f {
+fn fs_raytrace(vertex: SkyboxInterp) -> @location(0) vec4f {
     let origin = (res_camera.local_to_world * vec4f(0.0, 0.0, 0.0, 1.0)).xyz;
 
     var rq: ray_query;
@@ -81,12 +74,7 @@ fn fs_skybox(vertex: SkyboxInterp) -> @location(0) vec4f {
     } else {
         let w = 1.0 - intersection.barycentrics.x - intersection.barycentrics.y;
         let centrality = min(min(intersection.barycentrics.x, intersection.barycentrics.y), w) * 3.0;
-        let input = vec3<u32>(
-            intersection.geometry_index,
-            intersection.primitive_index,
-            intersection.instance_custom_data,
-        );
-        let color = u32x3_to_color(input);
+        let color = u32_to_color(intersection.instance_custom_data);
         result = select(0.0, 1.0, centrality > 0.1) * vec4f(color, 1.0);
         // result = vec4f(intersection.barycentrics, 1.0 - intersection.barycentrics.x - intersection.barycentrics.y, 1.0);
     }

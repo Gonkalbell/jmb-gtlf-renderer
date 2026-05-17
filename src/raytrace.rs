@@ -75,10 +75,10 @@ impl Skybox {
         let skybox_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("skybox"),
             layout: Some(&raytrace::create_pipeline_layout(device)),
-            vertex: shaders::vertex_state(&shader, &raytrace::vs_skybox_entry()),
+            vertex: shaders::vertex_state(&shader, &raytrace::vs_raytrace_entry()),
             fragment: Some(shaders::fragment_state(
                 &shader,
-                &raytrace::fs_skybox_entry([Some(color_format.into())]),
+                &raytrace::fs_raytrace_entry([Some(color_format.into())]),
             )),
             primitive: wgpu::PrimitiveState {
                 front_face: wgpu::FrontFace::Cw,
