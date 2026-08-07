@@ -15,7 +15,7 @@ bytemuck = { version = "1.23", features = ["derive"] }
 data-url = "0.3.2"
 eframe = { version = "0.34", default-features = false, features = ["default_fonts", "wgpu", "persistence", "wayland", "x11"] }
 futures = "0.3"
-glam = { version = "0.32", features = ["bytemuck", "serde"] }
+glam = { version = "0.33", features = ["bytemuck", "serde"] }
 gltf = { version = "1.4", default-features = false, features = ["KHR_lights_punctual", "extensions", "extras", "names", "utils"] }
 image = "0.25.10"
 ktx2 = "0.5"
