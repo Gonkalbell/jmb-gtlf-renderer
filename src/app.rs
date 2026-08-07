@@ -1,10 +1,11 @@
 //! Since I mostly want to do my own rendering, very little actually happens in the top level `App` struct. Instead,
 //! most of the rendering logic actually happens in `renderer.rs`
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
 use eframe::{
-    egui::{self, RichText, Widget, ahash::HashMap},
+    egui::{self, RichText, Widget},
     egui_wgpu::{self, CallbackTrait, RenderState},
 };
 use puffin::profile_function;
@@ -223,7 +224,7 @@ impl RendererApp {
                                 } = render_state.clone();
                                 let url = Url::parse(ASSETS_BASE_URL)
                                     .unwrap()
-                                    .join(&format!("{}/{}/{}", &model.name, variant, file))
+                                    .join(&format!("{}/{}/{}", model.name, variant, file))
                                     .unwrap();
                                 let loading_progress = self.loading_progress.clone();
                                 crate::spawn(async move {
@@ -257,7 +258,7 @@ impl eframe::App for RendererApp {
             .wgpu_render_state()
             .expect("WGPU is not properly initialized");
 
-        egui::Panel::top("top_panel").show_inside(ui, |ui| {
+        egui::Panel::top("top_panel").show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("Asset", |ui| {
                     self.show_scene_menu(render_state, ui);
@@ -284,7 +285,7 @@ impl eframe::App for RendererApp {
         });
 
         let response = egui::CentralPanel::default()
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.painter()
                     .add(eframe::egui_wgpu::Callback::new_paint_callback(
                         ui.viewport_rect(),

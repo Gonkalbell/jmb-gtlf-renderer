@@ -6,6 +6,7 @@ mod camera;
 mod skybox;
 
 #[allow(clippy::all)]
+#[allow(warnings)]
 mod shaders;
 
 use std::future::Future;
@@ -51,7 +52,7 @@ pub mod bind_groups {
 pub struct OwnedBufferSlice {
     buffer: wgpu::Buffer,
     offset: wgpu::BufferAddress,
-    size: wgpu::BufferSize,
+    size: wgpu::BufferAddress,
 }
 
 impl OwnedBufferSlice {
@@ -64,7 +65,6 @@ impl OwnedBufferSlice {
     }
 
     fn as_slice<'a>(&'a self) -> wgpu::BufferSlice<'a> {
-        self.buffer
-            .slice(self.offset..self.offset + self.size.get())
+        self.buffer.slice(self.offset..self.offset + self.size)
     }
 }

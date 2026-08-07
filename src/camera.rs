@@ -160,7 +160,12 @@ impl ArcBallCameraParams {
     }
 
     pub fn local_to_proj_matrix(&self) -> Mat4 {
-        Mat4::perspective_rh(TAU * self.fov_y_revs, self.aspect_ratio, 0.1, 1000.)
+        glam::camera::rh::proj::directx::perspective(
+            TAU * self.fov_y_revs,
+            self.aspect_ratio,
+            0.1,
+            1000.,
+        )
     }
 
     pub fn get_buffer_data(&self) -> bgroup_camera::Camera {

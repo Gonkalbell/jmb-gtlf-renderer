@@ -293,7 +293,7 @@ pub async fn load_asset(
         loading_progress.loaded = loading_progress.total;
     }
 
-    log::info!("finished loading {}", &url);
+    log::info!("finished loading {}", url);
     Ok(Asset {
         info: asset_info,
         pipeline_batches,
@@ -636,8 +636,7 @@ fn generate_meshes(
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Default Vertex Input"),
             contents: bytemuck::bytes_of(&default_vertex_input),
-            usage: wgpu::BufferUsages::COPY_DST
-                | wgpu::BufferUsages::VERTEX
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::VERTEX,
         });
     let default_buf_and_layout_iter = VertexInput::VERTEX_ATTRIBUTES.into_iter().map(|attrib| {
         (
@@ -810,10 +809,12 @@ fn create_pipeline(
             |OwnedVertexBufferLayout {
                  array_stride,
                  attribute,
-             }| wgpu::VertexBufferLayout {
-                array_stride: *array_stride,
-                step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: std::slice::from_ref(attribute),
+             }| {
+                Some(wgpu::VertexBufferLayout {
+                    array_stride: *array_stride,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: std::slice::from_ref(attribute),
+                })
             },
         )
         .collect();
